@@ -1,0 +1,106 @@
+html, body {
+    font-family: Roboto, Helvetica, Arial, sans-serif;
+}
+
+.map-host {
+    width: 100%;
+    height: calc(100vh - 140px);
+    min-height: 420px;
+    border-radius: 8px;
+}
+
+.map-host.short {
+    height: 420px;
+}
+
+.bus-marker-wrap {
+    background: transparent;
+    border: none;
+}
+
+.bus-marker {
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    border: 2px solid #fff;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, .5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.bus-marker.late { border-color: #c62828; border-width: 3px; }
+.bus-marker.early { border-color: #1565c0; border-width: 3px; }
+.bus-marker.held { outline: 3px dashed #000; }
+
+.bus-arrow {
+    color: #fff;
+    font-size: 11px;
+    line-height: 1;
+}
+
+.bus-label {
+    position: absolute;
+    top: 26px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 10px;
+    font-weight: 600;
+    background: rgba(255, 255, 255, .85);
+    padding: 0 3px;
+    border-radius: 3px;
+    white-space: nowrap;
+}
+
+.loading-progress {
+    position: absolute;
+    display: block;
+    width: 8rem;
+    height: 8rem;
+    inset: 20vh 0 auto 0;
+    margin: 0 auto;
+}
+
+.loading-progress circle {
+    fill: none;
+    stroke: #e0e0e0;
+    stroke-width: 0.6rem;
+    transform-origin: 50% 50%;
+    transform: rotate(-90deg);
+}
+
+.loading-progress circle:last-child {
+    stroke: #2e7d32;
+    stroke-dasharray: calc(3.141 * var(--blazor-load-percentage, 0%) * 0.8), 500%;
+    transition: stroke-dasharray 0.05s ease-in-out;
+}
+
+.loading-progress-text {
+    position: absolute;
+    text-align: center;
+    font-weight: bold;
+    inset: calc(20vh + 3.25rem) 0 auto 0.2rem;
+}
+
+.loading-progress-text:after {
+    content: var(--blazor-load-percentage-text, "Loading");
+}
+
+#blazor-error-ui {
+    background: lightyellow;
+    bottom: 0;
+    box-shadow: 0 -1px 2px rgba(0, 0, 0, 0.2);
+    display: none;
+    left: 0;
+    padding: 0.6rem 1.25rem 0.7rem 1.25rem;
+    position: fixed;
+    width: 100%;
+    z-index: 1000;
+}
+
+#blazor-error-ui .dismiss {
+    cursor: pointer;
+    position: absolute;
+    right: 0.75rem;
+    top: 0.5rem;
+}

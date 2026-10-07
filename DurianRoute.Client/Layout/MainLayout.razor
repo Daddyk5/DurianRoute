@@ -1,0 +1,120 @@
+@inherits LayoutComponentBase
+@implements IDisposable
+@inject SessionStore Session
+@inject TelemetryClient Telemetry
+@inject NavigationManager Nav
+@inject ISnackbar Snackbar
+
+<MudThemeProvider Theme="_theme" />
+<MudPopoverProvider />
+<MudDialogProvider />
+<MudSnackbarProvider />
+
+<MudLayout>
+    <MudAppBar Elevation="1" Color="Color.Primary">
+        <AuthorizeView>
+            <Authorized>
+                <MudIconButton Icon="@Icons.Material.Filled.Menu" Color="Color.Inherit" Edge="Edge.Start" OnClick="@(() => _drawerOpen = !_drawerOpen)" />
+            </Authorized>
+        </AuthorizeView>
+        <MudText Typo="Typo.h6" Class="ml-2">DurianRoute · CTTMO Dispatch</MudText>
+        <MudSpacer />
+        <AuthorizeView>
+            <Authorized>
+                <MudChip T="string" Size="Size.Small" Color="@ConnectionColor" Variant="Variant.Filled" Icon="@Icons.Material.Filled.Sensors">
+                    @Telemetry.State
+                </MudChip>
+                <MudText Typo="Typo.body2" Class="mx-3">@context.User.Identity?.Name</MudText>
+                <MudIconButton Icon="@Icons.Material.Filled.Logout" Color="Color.Inherit" OnClick="LogoutAsync" title="Sign out" />
+            </Authorized>
+        </AuthorizeView>
+    </MudAppBar>
+
+    <AuthorizeView>
+        <Authorized>
+            <MudDrawer @bind-Open="_drawerOpen" Elevation="1" ClipMode="DrawerClipMode.Always">
+                <MudNavMenu>
+                    <MudNavLink Href="" Match="NavLinkMatch.All" Icon="@Icons.Material.Filled.Map">Live Map</MudNavLink>
+                    <MudNavLink Href="deviations" Icon="@Icons.Material.Filled.Schedule">Schedule Deviations</MudNavLink>
+                    <MudNavLink Href="lanes" Icon="@Icons.Material.Filled.AltRoute">Lane Management</MudNavLink>
+                    <MudNavLink Href="forecasts" Icon="@Icons.Material.Filled.Insights">Predictive Heatmap</MudNavLink>
+                </MudNavMenu>
+            </MudDrawer>
+        </Authorized>
+    </AuthorizeView>
+
+    <MudMainContent>
+        <MudContainer MaxWidth="MaxWidth.ExtraExtraLarge" Class="pa-4">
+            @Body
+        </MudContainer>
+    </MudMainContent>
+</MudLayout>
+
+@code {
+    private bool _drawerOpen = true;
+
+    private readonly MudTheme _theme = new()
+    {
+        PaletteLight = new PaletteLight
+        {
+            Primary = "#2e7d32",
+            Secondary = "#f9a825",
+            AppbarBackground = "#2e7d32"
+        }
+    };
+
+    private Color ConnectionColor => Telemetry.State switch
+    {
+        HubConnectionState.Connected => Color.Success,
+        HubConnectionState.Reconnecting or HubConnectionState.Connecting => Color.Warning,
+        _ => Color.Error
+    };
+
+    [CascadingParameter] private Task<AuthenticationState>? AuthState { get; set; }
+
+    protected override void OnInitialized()
+    {
+        Telemetry.StateChanged += OnConnectionChanged;
+        Telemetry.DeviationAlert += OnDeviationAlert;
+        Telemetry.LaneConfigChanged += OnLaneChanged;
+    }
+
+    // Every page shows the live connection status and alerts, so connect as soon as someone is signed in.
+    protected override async Task OnParametersSetAsync()
+    {
+        if (AuthState is null || Telemetry.State != HubConnectionState.Disconnected) return;
+        var state = await AuthState;
+        if (state.User.Identity?.IsAuthenticated != true) return;
+        try
+        {
+            await Telemetry.EnsureStartedAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Live telemetry unavailable: {ex.Message}", Severity.Warning);
+        }
+    }
+
+    private void OnConnectionChanged(HubConnectionState _) => InvokeAsync(StateHasChanged);
+
+    private void OnDeviationAlert(DeviationAlertDto alert) =>
+        InvokeAsync(() => Snackbar.Add($"[{alert.RouteCode}] {alert.Message}",
+            alert.DeviationMinutes > 0 ? Severity.Warning : Severity.Info));
+
+    private void OnLaneChanged(LaneConfigChangedDto change) =>
+        InvokeAsync(() => Snackbar.Add($"{change.ChokePointName}: {Format.Lane(change.State)} (by {change.Actor})", Severity.Success));
+
+    private async Task LogoutAsync()
+    {
+        await Telemetry.StopAsync();
+        await Session.SignOutAsync();
+        Nav.NavigateTo("login");
+    }
+
+    public void Dispose()
+    {
+        Telemetry.StateChanged -= OnConnectionChanged;
+        Telemetry.DeviationAlert -= OnDeviationAlert;
+        Telemetry.LaneConfigChanged -= OnLaneChanged;
+    }
+}

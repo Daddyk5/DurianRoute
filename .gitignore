@@ -1,0 +1,25 @@
+# Build output
+bin/
+obj/
+*.user
+*.suo
+
+# IDE / tool folders
+.vs/
+.vscode/
+.idea/
+.kombai/
+
+# Runtime data (SQLite database, trained ML model)
+App_Data/
+*.db
+*.db-shm
+*.db-wal
+
+# Test output
+TestResults/
+coverage*.xml
+
+# OS
+Thumbs.db
+.DS_Store

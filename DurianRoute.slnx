@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="DurianRoute.Api/DurianRoute.Api.csproj" />
+  <Project Path="DurianRoute.Client/DurianRoute.Client.csproj" />
+  <Project Path="DurianRoute.Shared/DurianRoute.Shared.csproj" />
+  <Project Path="DurianRoute.Tests/DurianRoute.Tests.csproj" />
+</Solution>

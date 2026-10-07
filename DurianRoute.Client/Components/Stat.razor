@@ -1,0 +1,15 @@
+<MudPaper Elevation="1" Class="pa-3">
+    <MudText Typo="Typo.caption" Color="Color.Secondary">@Label</MudText>
+    <MudText Typo="Typo.h5" Color="@Color">@Value</MudText>
+    @if (Hint is not null)
+    {
+        <MudText Typo="Typo.caption">@Hint</MudText>
+    }
+</MudPaper>
+
+@code {
+    [Parameter, EditorRequired] public string Label { get; set; } = "";
+    [Parameter, EditorRequired] public string Value { get; set; } = "";
+    [Parameter] public string? Hint { get; set; }
+    [Parameter] public Color Color { get; set; } = Color.Default;
+}

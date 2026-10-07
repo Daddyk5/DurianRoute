@@ -1,0 +1,288 @@
+@page "/forecasts"
+@attribute [Authorize]
+@implements IAsyncDisposable
+@inject ApiClient Api
+@inject IJSRuntime JS
+@inject ISnackbar Snackbar
+@using Plotly.Blazor.Traces
+
+<PageTitle>Predictive Heatmap · DurianRoute</PageTitle>
+
+<div class="d-flex align-center mb-3 flex-wrap gap-2">
+    <MudText Typo="Typo.h5">Predictive traffic heatmap — next 24 hours</MudText>
+    <MudSpacer />
+    <MudToggleGroup T="string" @bind-Value="_view" @bind-Value:after="RefreshChartsAsync" Size="Size.Small" Color="Color.Primary">
+        <MudToggleItem Value="@("worst")" Text="Worst direction" />
+        <MudToggleItem Value="@("in")" Text="Inbound" />
+        <MudToggleItem Value="@("out")" Text="Outbound" />
+    </MudToggleGroup>
+    <AuthorizeView Roles="@Roles.Admin">
+        <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.ModelTraining" OnClick="RetrainAsync" Disabled="_training">
+            @(_training ? "Training…" : "Retrain model")
+        </MudButton>
+    </AuthorizeView>
+</div>
+
+<MudGrid Spacing="2" Class="mb-2">
+    @if (_metrics is { } m)
+    {
+        <MudItem xs="6" md="2"><Stat Label="R²" Value="@m.RSquared.ToString("0.000")" Hint="test set (last 14 days)" /></MudItem>
+        <MudItem xs="6" md="2"><Stat Label="MAE" Value="@($"{m.Mae:N1} veh/h")" Hint="mean absolute error" /></MudItem>
+        <MudItem xs="6" md="2"><Stat Label="RMSE" Value="@($"{m.Rmse:N1} veh/h")" /></MudItem>
+        <MudItem xs="6" md="2"><Stat Label="Baseline MAE" Value="@($"{m.BaselineMae:N1} veh/h")" Hint="same hour last week" /></MudItem>
+        <MudItem xs="6" md="2"><Stat Label="Improvement vs baseline" Value="@($"{(1 - m.Mae / m.BaselineMae):P0}")" Color="Color.Success" /></MudItem>
+        <MudItem xs="6" md="2"><Stat Label="Trained" Value="@Format.DateTimeText(m.TrainedAtUtc)" Hint="@($"{m.TrainingRows:N0} training rows")" /></MudItem>
+    }
+    else
+    {
+        <MudItem xs="12"><MudAlert Severity="Severity.Info">The model is still training on first start-up. Refresh in a minute.</MudAlert></MudItem>
+    }
+</MudGrid>
+
+<MudGrid Spacing="2">
+    <MudItem xs="12" lg="7">
+        <MudPaper Elevation="1" Class="pa-2">
+            <MudText Typo="Typo.subtitle1" Class="ml-2"><b>Predicted volume-to-capacity ratio</b> (≥ 1.0 = over capacity) · hours in PH time, starting @HourLabel(0)</MudText>
+            @if (_forecasts.Count > 0)
+            {
+                <PlotlyChart @ref="_heatmap" Id="heatmap" Config="_config" Layout="_heatmapLayout" Data="_heatmapData" />
+            }
+        </MudPaper>
+    </MudItem>
+
+    <MudItem xs="12" lg="5">
+        <MudPaper Elevation="1" Class="pa-2">
+            <div class="d-flex align-center px-2">
+                <MudText Typo="Typo.subtitle1"><b>Map at @HourLabel(_mapHour)</b></MudText>
+            </div>
+            <MudSlider T="int" Min="0" Max="@Math.Max(0, _hours.Count - 1)" @bind-Value="_mapHour" @bind-Value:after="ShowMapHourAsync" Class="px-2" />
+            <div id="@MapId" class="map-host short"></div>
+        </MudPaper>
+    </MudItem>
+
+    <MudItem xs="12">
+        <MudPaper Elevation="1" Class="pa-2">
+            <div class="d-flex align-center gap-4 px-2 flex-wrap">
+                <MudText Typo="Typo.subtitle1"><b>Forecast vs actual</b></MudText>
+                <MudSelect T="int" Label="Choke point" @bind-Value="_accuracyCp" @bind-Value:after="LoadAccuracyAsync" Dense="true" Style="max-width:280px">
+                    @foreach (var cp in _chokePoints)
+                    {
+                        <MudSelectItem Value="cp.Id">@cp.Name</MudSelectItem>
+                    }
+                </MudSelect>
+                <MudSelect T="TravelDirection" Label="Direction" @bind-Value="_accuracyDir" @bind-Value:after="LoadAccuracyAsync" Dense="true" Style="max-width:160px">
+                    <MudSelectItem Value="TravelDirection.Inbound">Inbound</MudSelectItem>
+                    <MudSelectItem Value="TravelDirection.Outbound">Outbound</MudSelectItem>
+                </MudSelect>
+            </div>
+            @if (_accuracyData.Count > 0)
+            {
+                <PlotlyChart @ref="_lineChart" Id="accuracy" Config="_config" Layout="_lineLayout" Data="_accuracyData" />
+            }
+        </MudPaper>
+    </MudItem>
+</MudGrid>
+
+@code {
+    private const string MapId = "forecast-map";
+
+    private List<ForecastDto> _forecasts = [];
+    private List<ChokePointDto> _chokePoints = [];
+    private List<DateTime> _hours = [];
+    private ModelMetricsDto? _metrics;
+    private string _view = "worst";
+    private int _mapHour;
+    private int _accuracyCp = 1;
+    private TravelDirection _accuracyDir = TravelDirection.Inbound;
+    private bool _training;
+    private bool _mapReady;
+    private Task _loading = Task.CompletedTask;
+
+    private PlotlyChart? _heatmap;
+    private PlotlyChart? _lineChart;
+    private readonly Config _config = new() { Responsive = true };
+    private Plotly.Blazor.Layout _heatmapLayout = new();
+    private Plotly.Blazor.Layout _lineLayout = new();
+    private readonly IList<ITrace> _heatmapData = new List<ITrace>();
+    private readonly IList<ITrace> _accuracyData = new List<ITrace>();
+
+    protected override Task OnInitializedAsync()
+    {
+        _loading = LoadAsync();
+        return _loading;
+    }
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            var forecasts = Api.GetForecastsAsync();
+            var cps = Api.GetChokePointsAsync();
+            var metrics = Api.GetModelMetricsAsync();
+            _forecasts = await forecasts;
+            _chokePoints = await cps;
+            _metrics = await metrics;
+            _hours = _forecasts.Select(f => f.HourStartUtc).Distinct().Order().ToList();
+            _accuracyCp = _chokePoints.FirstOrDefault()?.Id ?? 1;
+            BuildHeatmap();
+            await LoadAccuracyCoreAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        await _loading;
+        await JS.InvokeVoidAsync("durianMap.init", MapId, null);
+        _mapReady = true;
+        await ShowMapHourAsync();
+    }
+
+    private string HourLabel(int index) =>
+        index < _hours.Count ? Format.Ph(_hours[index]).ToString("ddd HH:00") : "–";
+
+    private double ValueFor(ForecastDto? inbound, ForecastDto? outbound) => _view switch
+    {
+        "in" => inbound?.PredictedVc ?? 0,
+        "out" => outbound?.PredictedVc ?? 0,
+        _ => Math.Max(inbound?.PredictedVc ?? 0, outbound?.PredictedVc ?? 0)
+    };
+
+    private (double Vc, double Delay) Cell(int cpId, DateTime hour)
+    {
+        var inbound = _forecasts.FirstOrDefault(f => f.ChokePointId == cpId && f.HourStartUtc == hour && f.Direction == TravelDirection.Inbound);
+        var outbound = _forecasts.FirstOrDefault(f => f.ChokePointId == cpId && f.HourStartUtc == hour && f.Direction == TravelDirection.Outbound);
+        var vc = ValueFor(inbound, outbound);
+        var delay = _view switch
+        {
+            "in" => inbound?.PredictedDelayMinutes ?? 0,
+            "out" => outbound?.PredictedDelayMinutes ?? 0,
+            _ => Math.Max(inbound?.PredictedDelayMinutes ?? 0, outbound?.PredictedDelayMinutes ?? 0)
+        };
+        return (vc, delay);
+    }
+
+    private void BuildHeatmap()
+    {
+        var x = _hours.Select(h => (object)Format.Ph(h).ToString("HH:00")).ToList();
+        var y = _chokePoints.Select(c => (object)c.Name).ToList();
+        var z = _chokePoints.Select(c => (object)_hours.Select(h => (object)Math.Round(Cell(c.Id, h).Vc, 2)).ToList()).ToList();
+
+        _heatmapData.Clear();
+        _heatmapData.Add(
+            new HeatMap
+            {
+                X = x,
+                Y = y,
+                Z = z,
+                ZMin = 0,
+                ZMax = 1.3m,
+                ColorScale = new object[]
+                {
+                    new object[] { 0, "#2e7d32" },
+                    new object[] { 0.5, "#f9a825" },
+                    new object[] { 0.7, "#ef6c00" },
+                    new object[] { 1, "#c62828" }
+                },
+                HoverTemplate = "%{y}<br>%{x}<br>v/c %{z}<extra></extra>"
+            });
+        _heatmapLayout = new Plotly.Blazor.Layout
+        {
+            Height = 420,
+            Margin = new Plotly.Blazor.LayoutLib.Margin { L = 160, R = 10, T = 10, B = 50 }
+        };
+    }
+
+    private async Task RefreshChartsAsync()
+    {
+        BuildHeatmap();
+        if (_heatmap is not null) await _heatmap.React();
+        await ShowMapHourAsync();
+    }
+
+    private async Task ShowMapHourAsync()
+    {
+        if (!_mapReady || _hours.Count == 0) return;
+        var hour = _hours[Math.Clamp(_mapHour, 0, _hours.Count - 1)];
+        var points = _chokePoints.Select(c =>
+        {
+            var (vc, delay) = Cell(c.Id, hour);
+            return new { name = c.Name, lat = c.Lat, lng = c.Lng, vc, delay };
+        });
+        await JS.InvokeVoidAsync("durianMap.showForecast", MapId, points);
+    }
+
+    private async Task LoadAccuracyAsync()
+    {
+        try
+        {
+            await LoadAccuracyCoreAsync();
+            if (_lineChart is not null) await _lineChart.React();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+    }
+
+    private async Task LoadAccuracyCoreAsync()
+    {
+        var points = await Api.GetAccuracyAsync(_accuracyCp, _accuracyDir);
+        var x = points.Select(p => (object)Format.Ph(p.HourStartUtc)).ToList();
+
+        _accuracyData.Clear();
+        _accuracyData.Add(
+            new Scatter
+            {
+                Name = "Actual",
+                Mode = Plotly.Blazor.Traces.ScatterLib.ModeFlag.Lines | Plotly.Blazor.Traces.ScatterLib.ModeFlag.Markers,
+                X = x,
+                Y = points.Select(p => (object?)p.Actual!).ToList()!
+            });
+        _accuracyData.Add(
+            new Scatter
+            {
+                Name = "Forecast",
+                Mode = Plotly.Blazor.Traces.ScatterLib.ModeFlag.Lines,
+                X = x,
+                Y = points.Select(p => (object?)p.Forecast!).ToList()!
+            });
+        _lineLayout = new Plotly.Blazor.Layout
+        {
+            Height = 340,
+            Margin = new Plotly.Blazor.LayoutLib.Margin { L = 60, R = 10, T = 10, B = 40 },
+            YAxis = [new Plotly.Blazor.LayoutLib.YAxis { Title = new Plotly.Blazor.LayoutLib.YAxisLib.Title { Text = "vehicles / hour" } }]
+        };
+    }
+
+    private async Task RetrainAsync()
+    {
+        _training = true;
+        try
+        {
+            _metrics = await Api.RetrainAsync();
+            Snackbar.Add($"Model retrained: R² {_metrics.RSquared:0.000}, MAE {_metrics.Mae:N1}", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+        finally
+        {
+            _training = false;
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("durianMap.dispose", MapId);
+        }
+        catch (JSDisconnectedException) { }
+    }
+}

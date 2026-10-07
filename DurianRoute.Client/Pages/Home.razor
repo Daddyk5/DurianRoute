@@ -1,0 +1,170 @@
+@page "/"
+@attribute [Authorize]
+@implements IAsyncDisposable
+@inject ApiClient Api
+@inject TelemetryClient Telemetry
+@inject IJSRuntime JS
+@inject ISnackbar Snackbar
+
+<PageTitle>Live Map · DurianRoute</PageTitle>
+
+<MudGrid Spacing="2">
+    <MudItem xs="12" lg="9">
+        <MudPaper Elevation="1" Class="pa-2">
+            <div class="d-flex align-center flex-wrap gap-2 mb-2">
+                <MudText Typo="Typo.h6" Class="mr-2">Live bus tracking</MudText>
+                @foreach (var route in _routes)
+                {
+                    var r = route;
+                    <MudChip T="int" Size="Size.Small" Variant="@(_hidden.Contains(r.Id) ? Variant.Outlined : Variant.Filled)"
+                             Style="@($"background:{(_hidden.Contains(r.Id) ? "transparent" : r.Color)};color:{(_hidden.Contains(r.Id) ? r.Color : "#fff")};border-color:{r.Color}")"
+                             OnClick="@(() => ToggleRouteAsync(r))">@r.Code · @r.Name</MudChip>
+                }
+            </div>
+            <div id="@MapId" class="map-host"></div>
+        </MudPaper>
+    </MudItem>
+
+    <MudItem xs="12" lg="3">
+        <MudPaper Elevation="1" Class="pa-3 mb-2">
+            <MudText Typo="Typo.subtitle1"><b>Selected bus</b></MudText>
+            @if (SelectedBus is { } bus)
+            {
+                <MudText Typo="Typo.h6">@bus.PlateNumber <MudText Inline="true" Typo="Typo.body2">(@bus.RouteCode, @bus.Direction)</MudText></MudText>
+                <MudText Typo="Typo.body2">Status: @bus.Status · @bus.SpeedKph km/h</MudText>
+                <MudText Typo="Typo.body2">Next stop: @bus.NextStop</MudText>
+                <MudChip T="string" Size="Size.Small" Color="@Format.DeviationColor(bus.DeviationMinutes)">@Format.Deviation(bus.DeviationMinutes)</MudChip>
+                <AuthorizeView Roles="@Roles.AdminOrDispatcher">
+                    <div class="d-flex gap-2 mt-2">
+                        <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Warning" OnClick="@(() => HoldAsync(bus.BusId))"
+                                   Disabled="@(bus.Status == BusStatus.Held)">Hold 3 min</MudButton>
+                        <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary" OnClick="@(() => ReleaseAsync(bus.BusId))"
+                                   Disabled="@(bus.Status != BusStatus.Held)">Release</MudButton>
+                    </div>
+                </AuthorizeView>
+            }
+            else
+            {
+                <MudText Typo="Typo.body2" Color="Color.Secondary">Click a bus on the map.</MudText>
+            }
+        </MudPaper>
+
+        <MudPaper Elevation="1" Class="pa-3">
+            <MudText Typo="Typo.subtitle1" Class="mb-1"><b>Choke points (live)</b></MudText>
+            @foreach (var s in _status.OrderByDescending(s => Math.Max(s.InboundVc, s.OutboundVc)))
+            {
+                var vc = Math.Max(s.InboundVc, s.OutboundVc);
+                <div class="d-flex align-center justify-space-between py-1">
+                    <div>
+                        <MudText Typo="Typo.body2"><b>@s.Name</b> @(s.IncidentActive ? "⚠" : "")</MudText>
+                        <MudText Typo="Typo.caption">In @s.InboundVolume · Out @s.OutboundVolume veh/h · @Format.Lane(s.ActiveLaneState)</MudText>
+                    </div>
+                    <MudChip T="string" Size="Size.Small" Color="@Format.CongestionColor(vc)">v/c @vc.ToString("0.00")</MudChip>
+                </div>
+            }
+        </MudPaper>
+    </MudItem>
+</MudGrid>
+
+@code {
+    private const string MapId = "live-map";
+
+    private List<RouteDto> _routes = [];
+    private List<ChokePointStatusDto> _status = [];
+    private readonly HashSet<int> _hidden = [];
+    private readonly Dictionary<int, BusPositionDto> _buses = [];
+    private int? _selectedBusId;
+    private DotNetObjectReference<Home>? _selfRef;
+    private bool _mapReady;
+    private Task _loading = Task.CompletedTask;
+
+    private BusPositionDto? SelectedBus => _selectedBusId is { } id && _buses.TryGetValue(id, out var b) ? b : null;
+
+    protected override Task OnInitializedAsync()
+    {
+        Telemetry.BusPositions += OnBusPositions;
+        Telemetry.ChokePointStatus += OnChokeStatus;
+        _loading = LoadAsync();
+        return _loading;
+    }
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            _routes = await Api.GetRoutesAsync();
+            _status = await Api.GetChokePointStatusAsync();
+            await Telemetry.EnsureStartedAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        // The first render can happen before the route data has arrived.
+        await _loading;
+        _selfRef = DotNetObjectReference.Create(this);
+        await JS.InvokeVoidAsync("durianMap.init", MapId, _selfRef);
+        await JS.InvokeVoidAsync("durianMap.setRoutes", MapId, _routes);
+        var chokePoints = await Api.GetChokePointsAsync();
+        await JS.InvokeVoidAsync("durianMap.setChokePoints", MapId, chokePoints);
+        await JS.InvokeVoidAsync("durianMap.updateChokeStatus", MapId, _status);
+        _mapReady = true;
+    }
+
+    [JSInvokable]
+    public Task OnBusSelected(int busId)
+    {
+        _selectedBusId = busId;
+        StateHasChanged();
+        return Task.CompletedTask;
+    }
+
+    private void OnBusPositions(List<BusPositionDto> positions) => InvokeAsync(async () =>
+    {
+        foreach (var p in positions) _buses[p.BusId] = p;
+        if (_mapReady) await JS.InvokeVoidAsync("durianMap.updateBuses", MapId, positions);
+        if (_selectedBusId is { } id && positions.Any(p => p.BusId == id)) StateHasChanged();
+    });
+
+    private void OnChokeStatus(List<ChokePointStatusDto> status) => InvokeAsync(async () =>
+    {
+        _status = status;
+        if (_mapReady) await JS.InvokeVoidAsync("durianMap.updateChokeStatus", MapId, status);
+        StateHasChanged();
+    });
+
+    private async Task ToggleRouteAsync(RouteDto route)
+    {
+        var show = _hidden.Remove(route.Id);
+        if (!show) _hidden.Add(route.Id);
+
+        // Unsubscribing tells the server to stop streaming that route to this dashboard.
+        if (show) await Telemetry.SubscribeRouteAsync(route.Id);
+        else await Telemetry.UnsubscribeRouteAsync(route.Id);
+        await JS.InvokeVoidAsync("durianMap.setRouteVisible", MapId, route.Id, show);
+    }
+
+    private async Task HoldAsync(int busId) => Report(await Telemetry.HoldBusAsync(busId, 3));
+
+    private async Task ReleaseAsync(int busId) => Report(await Telemetry.ReleaseBusAsync(busId));
+
+    private void Report(CommandResultDto result) =>
+        Snackbar.Add(result.Message, result.Success ? Severity.Success : Severity.Error);
+
+    public async ValueTask DisposeAsync()
+    {
+        Telemetry.BusPositions -= OnBusPositions;
+        Telemetry.ChokePointStatus -= OnChokeStatus;
+        try
+        {
+            await JS.InvokeVoidAsync("durianMap.dispose", MapId);
+        }
+        catch (JSDisconnectedException) { }
+        _selfRef?.Dispose();
+    }
+}

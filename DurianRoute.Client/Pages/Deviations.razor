@@ -1,0 +1,101 @@
+@page "/deviations"
+@attribute [Authorize]
+@implements IDisposable
+@inject ApiClient Api
+@inject TelemetryClient Telemetry
+@inject ISnackbar Snackbar
+
+<PageTitle>Schedule Deviations · DurianRoute</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-3">Schedule deviations</MudText>
+
+<MudGrid Spacing="2" Class="mb-2">
+    <MudItem xs="6" md="3"><Stat Label="Buses in service" Value="@_buses.Count.ToString()" /></MudItem>
+    <MudItem xs="6" md="3"><Stat Label="Running late (> 5 min)" Value="@_buses.Values.Count(b => b.DeviationMinutes > 5).ToString()" Color="Color.Error" /></MudItem>
+    <MudItem xs="6" md="3"><Stat Label="Running early (> 4 min)" Value="@_buses.Values.Count(b => b.DeviationMinutes < -4).ToString()" Color="Color.Info" /></MudItem>
+    <MudItem xs="6" md="3"><Stat Label="Average deviation" Value="@(_buses.Count == 0 ? "–" : $"{_buses.Values.Average(b => b.DeviationMinutes):+0.0;-0.0;0.0} min")" /></MudItem>
+</MudGrid>
+
+<MudGrid Spacing="2">
+    <MudItem xs="12" lg="7">
+        <MudTable T="BusPositionDto" Items="@_buses.Values.OrderByDescending(b => Math.Abs(b.DeviationMinutes))" Dense="true" Hover="true" Elevation="1">
+            <ToolBarContent><MudText Typo="Typo.h6">Live fleet</MudText></ToolBarContent>
+            <HeaderContent>
+                <MudTh>Bus</MudTh>
+                <MudTh>Route</MudTh>
+                <MudTh>Direction</MudTh>
+                <MudTh>Next stop</MudTh>
+                <MudTh>Status</MudTh>
+                <MudTh>Deviation</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd>@context.PlateNumber</MudTd>
+                <MudTd>@context.RouteCode</MudTd>
+                <MudTd>@context.Direction</MudTd>
+                <MudTd>@context.NextStop</MudTd>
+                <MudTd>@context.Status</MudTd>
+                <MudTd><MudChip T="string" Size="Size.Small" Color="@Format.DeviationColor(context.DeviationMinutes)">@Format.Deviation(context.DeviationMinutes)</MudChip></MudTd>
+            </RowTemplate>
+            <NoRecordsContent><MudText>Waiting for telemetry…</MudText></NoRecordsContent>
+        </MudTable>
+    </MudItem>
+
+    <MudItem xs="12" lg="5">
+        <MudTable T="DeviationAlertDto" Items="_alerts" Dense="true" Hover="true" Elevation="1" Height="560px" FixedHeader="true">
+            <ToolBarContent><MudText Typo="Typo.h6">Alert log</MudText></ToolBarContent>
+            <HeaderContent>
+                <MudTh>Time</MudTh>
+                <MudTh>Route</MudTh>
+                <MudTh>Alert</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd>@Format.Time(context.TimestampUtc)</MudTd>
+                <MudTd>@context.RouteCode</MudTd>
+                <MudTd>
+                    <MudText Typo="Typo.body2" Color="@(context.DeviationMinutes > 0 ? Color.Error : Color.Info)">@context.Message</MudText>
+                    <MudText Typo="Typo.caption">near @context.NearStop</MudText>
+                </MudTd>
+            </RowTemplate>
+            <NoRecordsContent><MudText>No deviation alerts yet.</MudText></NoRecordsContent>
+        </MudTable>
+    </MudItem>
+</MudGrid>
+
+@code {
+    private readonly Dictionary<int, BusPositionDto> _buses = [];
+    private List<DeviationAlertDto> _alerts = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        Telemetry.BusPositions += OnPositions;
+        Telemetry.DeviationAlert += OnAlert;
+        try
+        {
+            _alerts = await Api.GetDeviationsAsync(200);
+            await Telemetry.EnsureStartedAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+    }
+
+    private void OnPositions(List<BusPositionDto> positions) => InvokeAsync(() =>
+    {
+        foreach (var p in positions) _buses[p.BusId] = p;
+        StateHasChanged();
+    });
+
+    private void OnAlert(DeviationAlertDto alert) => InvokeAsync(() =>
+    {
+        _alerts.Insert(0, alert);
+        if (_alerts.Count > 200) _alerts.RemoveAt(_alerts.Count - 1);
+        StateHasChanged();
+    });
+
+    public void Dispose()
+    {
+        Telemetry.BusPositions -= OnPositions;
+        Telemetry.DeviationAlert -= OnAlert;
+    }
+}

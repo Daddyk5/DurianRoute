@@ -1,0 +1,71 @@
+@page "/login"
+@inject ApiClient Api
+@inject SessionStore Session
+@inject NavigationManager Nav
+
+<PageTitle>Sign in · DurianRoute</PageTitle>
+
+<MudGrid Justify="Justify.Center" Class="mt-10">
+    <MudItem xs="12" sm="8" md="5" lg="4">
+        <MudPaper Elevation="3" Class="pa-6">
+            <MudText Typo="Typo.h5" GutterBottom="true">CTTMO Dispatcher Sign-in</MudText>
+            <MudText Typo="Typo.body2" Class="mb-4" Color="Color.Secondary">DurianRoute smart transit dashboard</MudText>
+
+            <EditForm Model="_model" OnValidSubmit="SignInAsync">
+                <DataAnnotationsValidator />
+                <MudTextField @bind-Value="_model.UserName" Label="Username" Variant="Variant.Outlined"
+                              For="@(() => _model.UserName)" Class="mb-3" autocomplete="username" />
+                <MudTextField @bind-Value="_model.Password" Label="Password" Variant="Variant.Outlined" InputType="InputType.Password"
+                              For="@(() => _model.Password)" Class="mb-3" autocomplete="current-password" />
+                @if (_error is not null)
+                {
+                    <MudAlert Severity="Severity.Error" Dense="true" Class="mb-3">@_error</MudAlert>
+                }
+                <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary" FullWidth="true" Disabled="_busy">
+                    @(_busy ? "Signing in…" : "Sign in")
+                </MudButton>
+            </EditForm>
+        </MudPaper>
+    </MudItem>
+</MudGrid>
+
+@code {
+    [SupplyParameterFromQuery] public string? ReturnUrl { get; set; }
+
+    private readonly LoginModel _model = new();
+    private string? _error;
+    private bool _busy;
+
+    private class LoginModel
+    {
+        [System.ComponentModel.DataAnnotations.Required] public string UserName { get; set; } = "";
+        [System.ComponentModel.DataAnnotations.Required] public string Password { get; set; } = "";
+    }
+
+    private async Task SignInAsync()
+    {
+        _busy = true;
+        _error = null;
+        try
+        {
+            var session = await Api.LoginAsync(_model.UserName, _model.Password);
+            if (session is null)
+            {
+                _error = "Invalid username or password.";
+                return;
+            }
+            await Session.SignInAsync(session);
+            // Only allow local return paths.
+            var target = string.IsNullOrEmpty(ReturnUrl) || ReturnUrl.Contains("://") || ReturnUrl.StartsWith("//") ? "" : ReturnUrl;
+            Nav.NavigateTo(target);
+        }
+        catch (Exception ex)
+        {
+            _error = ex is ApiException ? ex.Message : "Cannot reach the DurianRoute server.";
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+}
