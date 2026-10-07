@@ -6,6 +6,8 @@ DurianRoute is a dispatch dashboard for the City Transport and Traffic Managemen
 
 ![Live map](docs/screenshots/02-live-map.png)
 
+**Portfolio case study:** [docs/index.html](docs/index.html). It's a standalone page; open it in a browser, or enable GitHub Pages (Settings → Pages → branch `main`, folder `/docs`) to publish it.
+
 > **Data note:** traffic volumes and bus movements are simulated. They follow Davao commuter patterns (inbound AM peak, outbound PM peak, weekends, holidays and Kadayawan, paydays, afternoon rain), and the code is built to take real CTTMO counts in their place. Coordinates are approximate and routes are drawn as straight lines between stops.
 
 ## Features
