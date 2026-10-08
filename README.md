@@ -16,7 +16,7 @@ DurianRoute is a dispatch dashboard for the City Transport and Traffic Managemen
 |---|---|---|
 | Real-time telemetry | SignalR streams bus positions every second, grouped per route. Buses drive along real Davao roads (OpenStreetMap routing via OSRM), and each bus reports its headway to the bus ahead so bunching is flagged. Dispatchers can hold and release buses from the map. | `DurianRoute.Api/Hubs`, `DurianRoute.Api/Simulation` |
 | Predictive analytics | An ML.NET FastTree regression forecasts hourly vehicle volume per choke point and direction, 24 hours ahead. | `DurianRoute.Api/Forecasting` |
-| Lane scheduling | Dynamic programming picks the lane layout for each hour that minimizes total person-minutes of delay. Forecast rain lowers road capacity in the plan. | `DurianRoute.Api/Scheduling` |
+| Lane scheduling | Dynamic programming picks the lane layout for each hour that minimizes total person-minutes of delay. Forecast rain lowers road capacity in the plan. Dispatchers can request changes; the admin approves or rejects everything. | `DurianRoute.Api/Scheduling` |
 | Live weather | Current Davao weather and a 24-hour outlook from Open-Meteo (free, no key). Rain cuts choke point capacity by 8–25% and slows buses. | `DurianRoute.Api/Weather` |
 | Dispatcher dashboard | Blazor WebAssembly + MudBlazor console: an Operations page with KPIs, a live map with a congestion layer and route filters, a fleet panel with search and bunching/late filters, weather, and an activity feed; plus schedule and headways, lane management and forecasts. Light and dark themes, JWT login and role-based access. | `DurianRoute.Client` |
 
@@ -76,7 +76,7 @@ DurianRoute.Api (ASP.NET Core)
   ├─ RouteShapeService: OSRM road geometry, cached in App_Data
   └─ EF Core → SQLite (default) or SQL Server
 DurianRoute.Shared — DTOs used by both sides
-DurianRoute.Tests  — xUnit (62 tests)
+DurianRoute.Tests  — xUnit (71 tests)
 ```
 
 ## Getting started
@@ -95,8 +95,23 @@ Open http://localhost:5183 and sign in:
 
 | Role | Username | Password |
 |---|---|---|
-| Admin (can also retrain the model) | `admin` | `Admin#2026` |
+| Admin | `admin` | `Admin#2026` |
 | Dispatcher | `dispatcher` | `Dispatch#2026` |
+
+### Roles
+
+The **admin makes the decisions**; **dispatchers operate and request**. The server enforces every rule, not just the UI.
+
+| Action | Dispatcher | Admin |
+|---|---|---|
+| Monitor buses, traffic, weather, forecasts | ✅ | ✅ |
+| Hold / release a bus (1–5 min bunching fix) | ✅ | ✅ |
+| Request a lane change (reason + 1–8 h) | ✅ | – |
+| Approve / reject system recommendations and dispatcher requests | – | ✅ |
+| Change a lane immediately | – | ✅ |
+| Retrain the forecasting model | – | ✅ |
+
+A dispatcher's request waits in the admin's queue and changes nothing until approved. Its window starts when the admin approves it. The admin gets a notification and a badge count for new requests, and the dispatcher is notified of the decision. Every applied change is recorded in the audit log with the admin who approved it.
 
 These are development-only accounts from `appsettings.Development.json`. The JWT signing key in that file is also development-only. Change both before deploying.
 

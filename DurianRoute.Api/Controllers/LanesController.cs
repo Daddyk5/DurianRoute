@@ -7,6 +7,10 @@ using Microsoft.EntityFrameworkCore;
 
 namespace DurianRoute.Api.Controllers;
 
+/// <summary>
+/// Lane decisions. Dispatchers see everything and can request changes; only the admin approves,
+/// rejects or changes lanes directly.
+/// </summary>
 [ApiController]
 [Authorize]
 [Route("api/lanes")]
@@ -14,7 +18,7 @@ public class LanesController(DurianDbContext db, LaneControlService lanes) : Con
 {
     private string Actor => User.Identity?.Name ?? "unknown";
 
-    /// <summary>Open recommendations plus anything decided in the last 24 hours.</summary>
+    /// <summary>Open recommendations and requests, plus anything decided in the last 24 hours.</summary>
     [HttpGet("recommendations")]
     public async Task<List<LaneRecommendationDto>> Recommendations(CancellationToken ct)
     {
@@ -26,18 +30,32 @@ public class LanesController(DurianDbContext db, LaneControlService lanes) : Con
                      || r.SlotEndUtc >= since)
             .OrderBy(r => r.SlotStartUtc).ThenBy(r => r.ChokePointId)
             .ToListAsync(ct);
-        return rows.Select(ToDto).ToList();
+        return rows.Select(r => r.ToDto()).ToList();
     }
 
+    /// <summary>Number of items waiting for the admin's decision.</summary>
+    [HttpGet("pending-count")]
+    public Task<int> PendingCount(CancellationToken ct) =>
+        db.LaneRecommendations.CountAsync(r => r.Status == RecommendationStatus.Pending && r.SlotEndUtc > DateTime.UtcNow, ct);
+
     [HttpPost("recommendations/{id:int}/approve")]
-    [Authorize(Roles = Roles.AdminOrDispatcher)]
+    [Authorize(Roles = Roles.Admin)]
     public Task<ActionResult<LaneRecommendationDto>> Approve(int id, DecisionRequest request, CancellationToken ct) =>
         Decide(id, true, request, ct);
 
     [HttpPost("recommendations/{id:int}/reject")]
-    [Authorize(Roles = Roles.AdminOrDispatcher)]
+    [Authorize(Roles = Roles.Admin)]
     public Task<ActionResult<LaneRecommendationDto>> Reject(int id, DecisionRequest request, CancellationToken ct) =>
         Decide(id, false, request, ct);
+
+    /// <summary>A dispatcher asks the admin to change a choke point's lanes for a few hours.</summary>
+    [HttpPost("requests")]
+    [Authorize(Roles = Roles.Dispatcher)]
+    public async Task<ActionResult<LaneRecommendationDto>> SubmitRequest(LaneChangeRequestDto request, CancellationToken ct)
+    {
+        var (rec, error) = await lanes.RequestAsync(request, Actor, ct);
+        return rec is null ? BadRequest(error) : rec.ToDto();
+    }
 
     [HttpPost("replan")]
     [Authorize(Roles = Roles.AdminOrDispatcher)]
@@ -47,8 +65,9 @@ public class LanesController(DurianDbContext db, LaneControlService lanes) : Con
         return created < 0 ? Conflict("Forecasts are not available yet.") : created;
     }
 
+    /// <summary>The admin changes a choke point's lanes immediately.</summary>
     [HttpPost("chokepoints/{id:int}/override")]
-    [Authorize(Roles = Roles.AdminOrDispatcher)]
+    [Authorize(Roles = Roles.Admin)]
     public async Task<IActionResult> Override(int id, OverrideRequest request, CancellationToken ct) =>
         await lanes.OverrideAsync(id, request.State, Actor, request.Note, ct)
             ? NoContent()
@@ -68,12 +87,6 @@ public class LanesController(DurianDbContext db, LaneControlService lanes) : Con
     private async Task<ActionResult<LaneRecommendationDto>> Decide(int id, bool approve, DecisionRequest request, CancellationToken ct)
     {
         var rec = await lanes.DecideAsync(id, approve, Actor, request.Note, ct);
-        if (rec is null) return NotFound("Recommendation not found or already decided.");
-        await db.Entry(rec).Reference(r => r.ChokePoint).LoadAsync(ct);
-        return ToDto(rec);
+        return rec is null ? NotFound("Recommendation not found or already decided.") : rec.ToDto();
     }
-
-    private static LaneRecommendationDto ToDto(LaneRecommendation r) => new(
-        r.Id, r.ChokePointId, r.ChokePoint!.Name, r.State, r.SlotStartUtc, r.SlotEndUtc,
-        r.EstimatedSavingsPersonMinutes, r.Reason, r.Status, r.DecidedBy, r.CreatedAtUtc);
 }

@@ -101,6 +101,7 @@ using (var scope = app.Services.CreateScope())
     var db = scope.ServiceProvider.GetRequiredService<DurianDbContext>();
     Directory.CreateDirectory(Path.Combine(app.Environment.ContentRootPath, "App_Data"));
     await db.Database.EnsureCreatedAsync();
+    await SchemaUpgrader.UpgradeAsync(db, app.Logger);
     await SeedData.EnsureSeededAsync(db, config);
 
     app.Services.GetRequiredService<LiveTrafficState>().Initialize(await db.ChokePoints.ToListAsync());

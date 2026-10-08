@@ -2,7 +2,7 @@ using DurianRoute.Shared;
 
 namespace DurianRoute.Client.Services;
 
-public enum ActivityKind { Late, Early, Lane, Weather, Incident, Plan, Command }
+public enum ActivityKind { Late, Early, Lane, Weather, Incident, Plan, Command, Request }
 
 public record ActivityItem(DateTime TimestampUtc, ActivityKind Kind, string Title, string Detail);
 
@@ -35,6 +35,8 @@ public sealed class LiveStore : IDisposable
         _telemetry.DeviationAlert += OnAlert;
         _telemetry.LaneConfigChanged += OnLaneChanged;
         _telemetry.RecommendationsUpdated += OnPlan;
+        _telemetry.LaneRequestSubmitted += OnRequestSubmitted;
+        _telemetry.LaneRequestDecided += OnRequestDecided;
         _flush = new Timer(_ => { if (_dirty) { _dirty = false; Changed?.Invoke(); } }, null, 500, 500);
     }
 
@@ -111,7 +113,14 @@ public sealed class LiveStore : IDisposable
     private void OnLaneChanged(LaneConfigChangedDto change) =>
         Log(ActivityKind.Lane, $"{change.ChokePointName}: {Format.Lane(change.State)}", $"by {change.Actor}");
 
-    private void OnPlan() => Log(ActivityKind.Plan, "Lane plan refreshed", "New recommendations are ready for review");
+    private void OnPlan() => Log(ActivityKind.Plan, "Lane plan updated", "Recommendations changed");
+
+    private void OnRequestSubmitted(LaneRecommendationDto r) =>
+        Log(ActivityKind.Request, $"{r.RequestedBy} requested {Format.Lane(r.State)}", $"{r.ChokePointName} · waiting for admin");
+
+    private void OnRequestDecided(LaneRecommendationDto r) =>
+        Log(ActivityKind.Request, $"Request {(r.Status == RecommendationStatus.Rejected ? "rejected" : "approved")}: {r.ChokePointName}",
+            $"{Format.Lane(r.State)} · by {r.DecidedBy}");
 
     public void Clear()
     {
@@ -132,5 +141,7 @@ public sealed class LiveStore : IDisposable
         _telemetry.DeviationAlert -= OnAlert;
         _telemetry.LaneConfigChanged -= OnLaneChanged;
         _telemetry.RecommendationsUpdated -= OnPlan;
+        _telemetry.LaneRequestSubmitted -= OnRequestSubmitted;
+        _telemetry.LaneRequestDecided -= OnRequestDecided;
     }
 }

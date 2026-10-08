@@ -107,6 +107,10 @@ public class LaneRecommendation
     public double EstimatedSavingsPersonMinutes { get; set; }
     public string Reason { get; set; } = "";
     public RecommendationStatus Status { get; set; }
+
+    /// <summary>System recommendation from the planner, or a dispatcher's request awaiting the admin.</summary>
+    public RecommendationSource Source { get; set; } = RecommendationSource.System;
+    public string? RequestedBy { get; set; }
     public string? DecidedBy { get; set; }
     public DateTime? DecidedAtUtc { get; set; }
     public DateTime CreatedAtUtc { get; set; }

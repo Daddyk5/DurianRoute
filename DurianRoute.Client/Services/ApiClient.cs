@@ -60,6 +60,8 @@ public class ApiClient(HttpClient http, SessionStore session, NavigationManager 
     public Task<LaneRecommendationDto> ApproveAsync(int id, string? note) => PostAsync<LaneRecommendationDto>($"api/lanes/recommendations/{id}/approve", new DecisionRequest(note));
     public Task<LaneRecommendationDto> RejectAsync(int id, string? note) => PostAsync<LaneRecommendationDto>($"api/lanes/recommendations/{id}/reject", new DecisionRequest(note));
     public Task<int> ReplanAsync() => PostAsync<int>("api/lanes/replan", null);
+    public Task<int> GetPendingCountAsync() => GetAsync<int>("api/lanes/pending-count");
+    public Task<LaneRecommendationDto> RequestLaneChangeAsync(LaneChangeRequestDto request) => PostAsync<LaneRecommendationDto>("api/lanes/requests", request);
 
     public async Task OverrideLaneAsync(int chokePointId, LaneState state, string? note)
     {

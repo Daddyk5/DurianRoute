@@ -56,6 +56,7 @@ public class DurianDbContext(DbContextOptions<DurianDbContext> options) : DbCont
             e.HasIndex(u => u.UserName).IsUnique();
         });
         b.Entity<LaneRecommendation>().Property(r => r.DecidedBy).HasMaxLength(64);
+        b.Entity<LaneRecommendation>().Property(r => r.RequestedBy).HasMaxLength(64);
         b.Entity<LaneChangeAudit>().Property(a => a.Actor).HasMaxLength(64);
         b.Entity<ScheduleDeviation>().Property(d => d.NearStop).HasMaxLength(200);
 

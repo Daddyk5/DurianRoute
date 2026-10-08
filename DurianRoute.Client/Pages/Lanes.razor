@@ -3,132 +3,208 @@
 @implements IDisposable
 @inject ApiClient Api
 @inject TelemetryClient Telemetry
+@inject IDialogService Dialogs
 @inject ISnackbar Snackbar
 
-<PageTitle>Lane Management · DurianRoute</PageTitle>
+<PageTitle>Lane management · DurianRoute</PageTitle>
 
 <header class="page-head">
     <div>
         <h1 class="page-title">Lane management</h1>
-        <p class="page-sub">Recommended reversible and bus-priority lanes for the next 24 hours, with rain from the live forecast included</p>
+        <p class="page-sub">
+            @if (_isAdmin)
+            {
+                <span>You approve or reject every lane change. System recommendations and dispatcher requests wait here for your decision.</span>
+            }
+            else
+            {
+                <span>Lane changes need the admin's approval. Request a change and you'll be notified of the decision.</span>
+            }
+        </p>
     </div>
-    <AuthorizeView Roles="@Roles.AdminOrDispatcher">
+    <div class="d-flex gap-2 flex-wrap">
         <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Refresh" OnClick="ReplanAsync" Disabled="_busy">Re-plan now</MudButton>
-    </AuthorizeView>
+        @if (!_isAdmin)
+        {
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Send" OnClick="@(() => OpenRequestAsync(null))" Disabled="_busy">Request lane change</MudButton>
+        }
+    </div>
 </header>
 
-<MudGrid Spacing="2">
-    <MudItem xs="12">
-        <MudTable T="LaneRecommendationDto" Items="@_recs.Where(r => r.Status is RecommendationStatus.Pending or RecommendationStatus.Approved or RecommendationStatus.Active)"
-                  Dense="true" Hover="true" Elevation="1" Loading="_loading">
-            <ToolBarContent>
-                <MudText Typo="Typo.h6">Recommendations (next 24 h)</MudText>
-            </ToolBarContent>
-            <HeaderContent>
-                <MudTh>Choke point</MudTh>
-                <MudTh>Window (PH time)</MudTh>
-                <MudTh>Configuration</MudTh>
-                <MudTh>Est. savings</MudTh>
-                <MudTh>Why</MudTh>
-                <MudTh>Status</MudTh>
-                <MudTh></MudTh>
-            </HeaderContent>
-            <RowTemplate>
-                <MudTd>@context.ChokePointName</MudTd>
-                <MudTd Style="white-space:nowrap">@Format.Window(context.SlotStartUtc, context.SlotEndUtc)</MudTd>
-                <MudTd>@Format.Lane(context.State)</MudTd>
-                <MudTd>@context.EstimatedSavingsPersonMinutes.ToString("N0") person-min</MudTd>
-                <MudTd><MudText Typo="Typo.caption">@context.Reason</MudText></MudTd>
-                <MudTd>
-                    <MudChip T="string" Size="Size.Small" Color="@Format.StatusColor(context.Status)">@context.Status</MudChip>
-                    @if (context.DecidedBy is not null)
-                    {
-                        <MudText Typo="Typo.caption">by @context.DecidedBy</MudText>
-                    }
-                </MudTd>
-                <MudTd Style="white-space:nowrap">
-                    @if (context.Status == RecommendationStatus.Pending)
-                    {
-                        <AuthorizeView Roles="@Roles.AdminOrDispatcher" Context="auth">
-                            <MudIconButton Icon="@Icons.Material.Filled.Check" Color="Color.Success" Size="Size.Small" title="Approve"
-                                           OnClick="@(() => DecideAsync(context, true))" Disabled="_busy" />
-                            <MudIconButton Icon="@Icons.Material.Filled.Close" Color="Color.Error" Size="Size.Small" title="Reject"
-                                           OnClick="@(() => DecideAsync(context, false))" Disabled="_busy" />
-                        </AuthorizeView>
-                    }
-                </MudTd>
-            </RowTemplate>
-            <NoRecordsContent><MudText>No lane changes recommended — the balanced layout is optimal for the forecast.</MudText></NoRecordsContent>
-        </MudTable>
-    </MudItem>
+@* ---------- Waiting for a decision ---------- *@
+<section class="card section">
+    <div class="section-head">
+        <h2>@(_isAdmin ? "Waiting for your decision" : "Waiting for the admin")</h2>
+        <span class="count-pill @(Pending.Any() ? "warn" : "")">@Pending.Count()</span>
+    </div>
+    @if (!Pending.Any())
+    {
+        <p class="empty">@(_loading ? "Loading…" : "Nothing is waiting. The balanced layout is best for the forecast right now.")</p>
+    }
+    else
+    {
+        <div class="decision-list">
+            @foreach (var rec in Pending)
+            {
+                var item = rec;
+                var isRequest = item.Source == RecommendationSource.DispatcherRequest;
+                <article class="decision @(isRequest ? "request" : "")">
+                    <div class="decision-main">
+                        <div class="decision-title">
+                            <b>@item.ChokePointName</b>
+                            <span class="arrow">→</span>
+                            <span>@Format.Lane(item.State)</span>
+                        </div>
+                        <div class="decision-meta">
+                            @if (isRequest)
+                            {
+                                <span class="tag tag-request"><MudIcon Icon="@Icons.Material.Filled.SupportAgent" Size="Size.Small" /> Requested by @item.RequestedBy</span>
+                                <span>@((item.SlotEndUtc - item.SlotStartUtc).TotalHours.ToString("0")) h from approval</span>
+                                <span>sent @Format.Time(item.CreatedAtUtc)</span>
+                            }
+                            else
+                            {
+                                <span class="tag tag-system"><MudIcon Icon="@Icons.Material.Filled.AutoAwesome" Size="Size.Small" /> System recommendation</span>
+                                <span>@Format.Window(item.SlotStartUtc, item.SlotEndUtc)</span>
+                                <span>saves ≈@item.EstimatedSavingsPersonMinutes.ToString("N0") person-min</span>
+                            }
+                        </div>
+                        <p class="decision-reason">@item.Reason</p>
+                    </div>
+                    <div class="decision-actions">
+                        @if (_isAdmin)
+                        {
+                            <MudButton Variant="Variant.Filled" Color="Color.Success" Size="Size.Small" StartIcon="@Icons.Material.Filled.Check"
+                                       OnClick="@(() => DecideAsync(item, true))" Disabled="_busy">Approve</MudButton>
+                            <MudButton Variant="Variant.Outlined" Color="Color.Error" Size="Size.Small" StartIcon="@Icons.Material.Filled.Close"
+                                       OnClick="@(() => DecideAsync(item, false))" Disabled="_busy">Reject</MudButton>
+                        }
+                        else
+                        {
+                            <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Outlined" Icon="@Icons.Material.Filled.HourglassTop">Awaiting admin</MudChip>
+                        }
+                    </div>
+                </article>
+            }
+        </div>
+    }
+</section>
 
+@* ---------- Decided ---------- *@
+<section class="card section">
+    <div class="section-head"><h2>Scheduled, active and recent decisions</h2></div>
+    <MudTable T="LaneRecommendationDto" Items="Decided" Dense="true" Hover="true" Elevation="0">
+        <HeaderContent>
+            <MudTh>Choke point</MudTh>
+            <MudTh>Layout</MudTh>
+            <MudTh>Window (PH time)</MudTh>
+            <MudTh>Source</MudTh>
+            <MudTh>Status</MudTh>
+            <MudTh>Decided by</MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd>@context.ChokePointName</MudTd>
+            <MudTd>@Format.Lane(context.State)</MudTd>
+            <MudTd Style="white-space:nowrap">@Format.Window(context.SlotStartUtc, context.SlotEndUtc)</MudTd>
+            <MudTd>@(context.Source == RecommendationSource.DispatcherRequest ? $"Request · {context.RequestedBy}" : "System")</MudTd>
+            <MudTd><MudChip T="string" Size="Size.Small" Color="@Format.StatusColor(context.Status)">@context.Status</MudChip></MudTd>
+            <MudTd>@(context.DecidedBy ?? "–")</MudTd>
+        </RowTemplate>
+        <NoRecordsContent><MudText Class="muted">No decisions in the last 24 hours.</MudText></NoRecordsContent>
+    </MudTable>
+</section>
+
+<MudGrid Spacing="2">
+    @* ---------- Current configuration ---------- *@
     <MudItem xs="12" xl="7">
-        <MudTable T="ChokePointDto" Items="_chokePoints" Dense="true" Elevation="1">
-            <ToolBarContent><MudText Typo="Typo.h6">Current configuration</MudText></ToolBarContent>
-            <HeaderContent>
-                <MudTh>Choke point</MudTh>
-                <MudTh>Lanes/dir</MudTh>
-                <MudTh>Active layout</MudTh>
-                <MudTh>Manual override</MudTh>
-            </HeaderContent>
-            <RowTemplate>
-                <MudTd>@context.Name@(context.HasReversibleLane ? "" : " · no reversible lane")</MudTd>
-                <MudTd>@context.LanesPerDirection</MudTd>
-                <MudTd><MudChip T="string" Size="Size.Small" Color="@(context.ActiveLaneState == LaneState.Normal ? Color.Default : Color.Success)">@Format.Lane(context.ActiveLaneState)</MudChip></MudTd>
-                <MudTd>
-                    <AuthorizeView Roles="@Roles.AdminOrDispatcher" Context="auth">
-                        <Authorized>
+        <section class="card section h-100">
+            <div class="section-head"><h2>Current configuration</h2></div>
+            <MudTable T="ChokePointDto" Items="_chokePoints" Dense="true" Elevation="0">
+                <HeaderContent>
+                    <MudTh>Choke point</MudTh>
+                    <MudTh>Lanes/dir</MudTh>
+                    <MudTh>Active layout</MudTh>
+                    <MudTh>@(_isAdmin ? "Change now" : "")</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd>@context.Name@(context.HasReversibleLane ? "" : " · no reversible lane")</MudTd>
+                    <MudTd>@context.LanesPerDirection</MudTd>
+                    <MudTd><MudChip T="string" Size="Size.Small" Color="@(context.ActiveLaneState == LaneState.Normal ? Color.Default : Color.Success)">@Format.Lane(context.ActiveLaneState)</MudChip></MudTd>
+                    <MudTd>
+                        @if (_isAdmin)
+                        {
                             <MudSelect T="LaneState" Dense="true" Value="context.ActiveLaneState" ValueChanged="@(s => OverrideAsync(context, s))"
-                                       Variant="Variant.Outlined" Margin="Margin.Dense" Disabled="_busy" Style="min-width:260px">
+                                       Variant="Variant.Outlined" Margin="Margin.Dense" Disabled="_busy" Style="min-width:240px">
                                 @foreach (var state in AllowedStates(context))
                                 {
                                     <MudSelectItem Value="state">@Format.Lane(state)</MudSelectItem>
                                 }
                             </MudSelect>
-                        </Authorized>
-                        <NotAuthorized>–</NotAuthorized>
-                    </AuthorizeView>
-                </MudTd>
-            </RowTemplate>
-        </MudTable>
+                        }
+                        else
+                        {
+                            <MudButton Size="Size.Small" Variant="Variant.Text" StartIcon="@Icons.Material.Filled.Send"
+                                       OnClick="@(() => OpenRequestAsync(context.Id))" Disabled="_busy">Request change</MudButton>
+                        }
+                    </MudTd>
+                </RowTemplate>
+            </MudTable>
+        </section>
     </MudItem>
 
+    @* ---------- Audit ---------- *@
     <MudItem xs="12" xl="5">
-        <MudTable T="LaneChangeAuditDto" Items="_audit" Dense="true" Elevation="1" Height="420px" FixedHeader="true">
-            <ToolBarContent><MudText Typo="Typo.h6">Audit log</MudText></ToolBarContent>
-            <HeaderContent>
-                <MudTh>Time</MudTh>
-                <MudTh>Choke point</MudTh>
-                <MudTh>Change</MudTh>
-                <MudTh>By</MudTh>
-            </HeaderContent>
-            <RowTemplate>
-                <MudTd>@Format.DateTimeText(context.TimestampUtc)</MudTd>
-                <MudTd>@context.ChokePointName</MudTd>
-                <MudTd>
-                    @context.FromState → @context.ToState
-                    <MudText Typo="Typo.caption">@context.Note</MudText>
-                </MudTd>
-                <MudTd>@context.Actor</MudTd>
-            </RowTemplate>
-            <NoRecordsContent><MudText>No lane changes yet.</MudText></NoRecordsContent>
-        </MudTable>
+        <section class="card section h-100">
+            <div class="section-head"><h2>Audit log</h2></div>
+            <MudTable T="LaneChangeAuditDto" Items="_audit" Dense="true" Elevation="0" Height="440px" FixedHeader="true">
+                <HeaderContent>
+                    <MudTh>Time</MudTh>
+                    <MudTh>Choke point</MudTh>
+                    <MudTh>Change</MudTh>
+                    <MudTh>By</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd Style="white-space:nowrap">@Format.DateTimeText(context.TimestampUtc)</MudTd>
+                    <MudTd>@context.ChokePointName</MudTd>
+                    <MudTd>
+                        @context.FromState → @context.ToState
+                        <MudText Typo="Typo.caption" Class="muted">@context.Note</MudText>
+                    </MudTd>
+                    <MudTd>@context.Actor</MudTd>
+                </RowTemplate>
+                <NoRecordsContent><MudText Class="muted">No lane changes yet.</MudText></NoRecordsContent>
+            </MudTable>
+        </section>
     </MudItem>
 </MudGrid>
 
 @code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthState { get; set; }
+
     private List<LaneRecommendationDto> _recs = [];
     private List<ChokePointDto> _chokePoints = [];
     private List<LaneChangeAuditDto> _audit = [];
     private bool _loading = true;
     private bool _busy;
+    private bool _isAdmin;
+
+    // Dispatcher requests first: a person is waiting on them.
+    private IEnumerable<LaneRecommendationDto> Pending => _recs
+        .Where(r => r.Status == RecommendationStatus.Pending && r.SlotEndUtc > DateTime.UtcNow)
+        .OrderByDescending(r => r.Source == RecommendationSource.DispatcherRequest)
+        .ThenBy(r => r.SlotStartUtc);
+
+    private IEnumerable<LaneRecommendationDto> Decided => _recs
+        .Where(r => r.Status != RecommendationStatus.Pending)
+        .OrderByDescending(r => r.Status is RecommendationStatus.Active or RecommendationStatus.Approved)
+        .ThenByDescending(r => r.SlotStartUtc);
 
     protected override async Task OnInitializedAsync()
     {
+        if (AuthState is not null) _isAdmin = (await AuthState).User.IsInRole(Roles.Admin);
         Telemetry.RecommendationsUpdated += OnChanged;
         Telemetry.LaneConfigChanged += OnLaneChanged;
         await ReloadAsync();
-        try { await Telemetry.EnsureStartedAsync(); } catch { /* the map page reports connection problems */ }
     }
 
     private static IEnumerable<LaneState> AllowedStates(ChokePointDto cp) =>
@@ -162,16 +238,38 @@
 
     private async Task DecideAsync(LaneRecommendationDto rec, bool approve)
     {
+        var dialog = await Dialogs.ShowAsync<DecisionDialog>(null,
+            new DialogParameters<DecisionDialog> { { d => d.Item, rec }, { d => d.Approve, approve } },
+            new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true, CloseOnEscapeKey = true });
+        var result = await dialog.Result;
+        if (result is null || result.Canceled) return;
+
+        var note = result.Data as string;
         await RunAsync(async () =>
         {
-            if (approve) await Api.ApproveAsync(rec.Id, null);
-            else await Api.RejectAsync(rec.Id, null);
-            Snackbar.Add($"{(approve ? "Approved" : "Rejected")}: {rec.ChokePointName} — {Format.Lane(rec.State)}", Severity.Success);
+            if (approve) await Api.ApproveAsync(rec.Id, note);
+            else await Api.RejectAsync(rec.Id, note);
+            Snackbar.Add($"{(approve ? "Approved" : "Rejected")}: {rec.ChokePointName} → {Format.Lane(rec.State)}", approve ? Severity.Success : Severity.Info);
+        });
+    }
+
+    private async Task OpenRequestAsync(int? chokePointId)
+    {
+        var dialog = await Dialogs.ShowAsync<LaneRequestDialog>(null,
+            new DialogParameters<LaneRequestDialog> { { d => d.ChokePoints, _chokePoints }, { d => d.ChokePointId, chokePointId } },
+            new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true, CloseOnEscapeKey = true });
+        var result = await dialog.Result;
+        if (result is null || result.Canceled || result.Data is not LaneChangeRequestDto request) return;
+
+        await RunAsync(async () =>
+        {
+            var sent = await Api.RequestLaneChangeAsync(request);
+            Snackbar.Add($"Request sent to the admin: {sent.ChokePointName} → {Format.Lane(sent.State)}", Severity.Success);
         });
     }
 
     private Task OverrideAsync(ChokePointDto cp, LaneState state) =>
-        RunAsync(() => Api.OverrideLaneAsync(cp.Id, state, "Manual override from dashboard"));
+        RunAsync(() => Api.OverrideLaneAsync(cp.Id, state, "Changed directly by admin"));
 
     private Task ReplanAsync() => RunAsync(async () =>
     {

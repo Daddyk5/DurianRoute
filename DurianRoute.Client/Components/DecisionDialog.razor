@@ -1,0 +1,40 @@
+@* Admin confirmation for approving or rejecting a lane change. *@
+<MudDialog>
+    <TitleContent>
+        <div class="d-flex align-center gap-2">
+            <MudIcon Icon="@(Approve ? Icons.Material.Filled.CheckCircle : Icons.Material.Filled.Cancel)" Color="@(Approve ? Color.Success : Color.Error)" />
+            <MudText Typo="Typo.h6">@(Approve ? "Approve" : "Reject") lane change</MudText>
+        </div>
+    </TitleContent>
+    <DialogContent>
+        <div class="decision-summary">
+            <div><span>Choke point</span><b>@Item.ChokePointName</b></div>
+            <div><span>Change to</span><b>@Format.Lane(Item.State)</b></div>
+            <div><span>Window</span><b>@WindowText</b></div>
+            <div><span>Source</span><b>@(Item.Source == RecommendationSource.DispatcherRequest ? $"Requested by {Item.RequestedBy}" : "System recommendation")</b></div>
+        </div>
+        <MudText Typo="Typo.body2" Class="muted my-3">@Item.Reason</MudText>
+        <MudTextField T="string" Label="@(Approve ? "Note (optional)" : "Reason for rejecting (shown to the dispatcher)")" @bind-Value="_note"
+                      Variant="Variant.Outlined" Lines="2" MaxLength="200" Immediate="true" id="decision-note" />
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@(() => MudDialog.Cancel())">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled" Color="@(Approve ? Color.Success : Color.Error)" OnClick="Confirm">
+            @(Approve ? "Approve" : "Reject")
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = null!;
+    [Parameter] public LaneRecommendationDto Item { get; set; } = null!;
+    [Parameter] public bool Approve { get; set; }
+
+    private string? _note;
+
+    private string WindowText => Item.Source == RecommendationSource.DispatcherRequest
+        ? $"{(Item.SlotEndUtc - Item.SlotStartUtc).TotalHours:0} h, starting when approved"
+        : Format.Window(Item.SlotStartUtc, Item.SlotEndUtc);
+
+    private void Confirm() => MudDialog.Close(DialogResult.Ok(_note?.Trim() ?? ""));
+}

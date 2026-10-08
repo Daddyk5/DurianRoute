@@ -1,0 +1,78 @@
+@* Dispatcher form: ask the admin to change a choke point's lanes for a few hours. *@
+<MudDialog>
+    <TitleContent>
+        <div class="d-flex align-center gap-2">
+            <MudIcon Icon="@Icons.Material.Filled.AltRoute" Color="Color.Primary" />
+            <MudText Typo="Typo.h6">Request a lane change</MudText>
+        </div>
+    </TitleContent>
+    <DialogContent>
+        <MudText Typo="Typo.body2" Class="muted mb-4">The admin reviews every request. Nothing changes on the street until it's approved.</MudText>
+        <div class="d-flex flex-column gap-4">
+            <MudSelect T="int" Label="Choke point" @bind-Value="_chokePointId" @bind-Value:after="OnChokePointChanged" Variant="Variant.Outlined" id="req-chokepoint">
+                @foreach (var cp in ChokePoints)
+                {
+                    <MudSelectItem Value="cp.Id">@cp.Name</MudSelectItem>
+                }
+            </MudSelect>
+            @if (Selected is { } current)
+            {
+                <MudText Typo="Typo.caption" Class="muted mt-n2">Now: @Format.Lane(current.ActiveLaneState) · @current.LanesPerDirection lanes per direction@(current.HasReversibleLane ? "" : " · no reversible lane")</MudText>
+            }
+            <MudSelect T="LaneState" Label="Change to" @bind-Value="_state" Variant="Variant.Outlined" id="req-state">
+                @foreach (var s in AllowedStates)
+                {
+                    <MudSelectItem Value="s">@Format.Lane(s)</MudSelectItem>
+                }
+            </MudSelect>
+            <MudSelect T="int" Label="For how long" @bind-Value="_hours" Variant="Variant.Outlined" id="req-hours">
+                @foreach (var h in new[] { 1, 2, 3, 4, 6, 8 })
+                {
+                    <MudSelectItem Value="h">@h hour@(h == 1 ? "" : "s") after approval</MudSelectItem>
+                }
+            </MudSelect>
+            <MudTextField T="string" Label="Reason" @bind-Value="_reason" Variant="Variant.Outlined" Lines="3" MaxLength="300" Counter="300"
+                          Placeholder="e.g. Vehicle breakdown on the inbound lanes at Matina Crossing" Immediate="true" id="req-reason" />
+        </div>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@(!CanSubmit)" OnClick="Submit" StartIcon="@Icons.Material.Filled.Send">Send to admin</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = null!;
+    [Parameter] public List<ChokePointDto> ChokePoints { get; set; } = [];
+    [Parameter] public int? ChokePointId { get; set; }
+
+    private int _chokePointId;
+    private LaneState _state;
+    private int _hours = 2;
+    private string _reason = "";
+
+    private ChokePointDto? Selected => ChokePoints.FirstOrDefault(c => c.Id == _chokePointId);
+
+    private IEnumerable<LaneState> AllowedStates => Selected is { } cp
+        ? Enum.GetValues<LaneState>().Where(s => s != cp.ActiveLaneState && s switch
+        {
+            LaneState.ReversibleInbound or LaneState.ReversibleOutbound => cp.HasReversibleLane && cp.LanesPerDirection >= 2,
+            LaneState.BusLaneInbound or LaneState.BusLaneOutbound => cp.LanesPerDirection >= 2,
+            _ => true
+        })
+        : [];
+
+    private bool CanSubmit => Selected is not null && AllowedStates.Contains(_state) && !string.IsNullOrWhiteSpace(_reason);
+
+    protected override void OnInitialized()
+    {
+        _chokePointId = ChokePointId ?? ChokePoints.FirstOrDefault()?.Id ?? 0;
+        OnChokePointChanged();
+    }
+
+    private void OnChokePointChanged() => _state = AllowedStates.FirstOrDefault();
+
+    private void Submit() => MudDialog.Close(DialogResult.Ok(new LaneChangeRequestDto(_chokePointId, _state, _hours, _reason.Trim())));
+
+    private void Cancel() => MudDialog.Cancel();
+}

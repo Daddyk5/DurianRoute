@@ -27,6 +27,13 @@ public enum RecommendationStatus
     Expired = 5
 }
 
+/// <summary>Where a lane change proposal came from.</summary>
+public enum RecommendationSource
+{
+    System = 0,
+    DispatcherRequest = 1
+}
+
 public enum BusStatus
 {
     InService = 0,
@@ -52,6 +59,8 @@ public static class HubEvents
     public const string RecommendationsUpdated = "RecommendationsUpdated";
     public const string CommandResult = "CommandResult";
     public const string Weather = "Weather";
+    public const string LaneRequestSubmitted = "LaneRequestSubmitted";
+    public const string LaneRequestDecided = "LaneRequestDecided";
 }
 
 public static class HubPaths
@@ -166,7 +175,9 @@ public record LaneRecommendationDto(
     string Reason,
     RecommendationStatus Status,
     string? DecidedBy,
-    DateTime CreatedAtUtc);
+    DateTime CreatedAtUtc,
+    RecommendationSource Source = RecommendationSource.System,
+    string? RequestedBy = null);
 
 public record LaneChangeAuditDto(
     long Id,
@@ -183,6 +194,9 @@ public record LaneConfigChangedDto(int ChokePointId, string ChokePointName, Lane
 public record DecisionRequest(string? Note);
 
 public record OverrideRequest(LaneState State, string? Note);
+
+/// <summary>A dispatcher asking the admin to change a choke point's lane layout for a few hours.</summary>
+public record LaneChangeRequestDto(int ChokePointId, LaneState State, int DurationHours, string Reason);
 
 public record LoginRequest(string UserName, string Password);
 

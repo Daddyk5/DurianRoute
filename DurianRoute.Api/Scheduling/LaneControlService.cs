@@ -10,8 +10,8 @@ using Microsoft.Extensions.Options;
 namespace DurianRoute.Api.Scheduling;
 
 /// <summary>
-/// Turns forecasts + live conditions into lane recommendations, and applies the ones dispatchers
-/// approve when their time slot starts.
+/// Turns forecasts + live conditions into lane recommendations, takes lane change requests from
+/// dispatchers, and applies whatever the admin approves when its time slot starts.
 /// </summary>
 public class LaneControlService(
     DurianDbContext db,
@@ -39,10 +39,11 @@ public class LaneControlService(
             .ToListAsync(ct);
         if (forecasts.Count == 0) return -1;
 
-        // Pending recommendations whose window has passed are expired; future ones get replaced.
+        // Pending items whose window has passed are expired. Future system recommendations get
+        // replaced; dispatcher requests stay in the admin's queue until decided.
         var pending = await db.LaneRecommendations.Where(r => r.Status == RecommendationStatus.Pending).ToListAsync(ct);
         foreach (var r in pending.Where(r => r.SlotEndUtc <= now)) r.Status = RecommendationStatus.Expired;
-        db.LaneRecommendations.RemoveRange(pending.Where(r => r.SlotEndUtc > now));
+        db.LaneRecommendations.RemoveRange(pending.Where(r => r.SlotEndUtc > now && r.Source == RecommendationSource.System));
 
         var decided = await db.LaneRecommendations.AsNoTracking()
             .Where(r => r.SlotEndUtc > firstSlot && (r.Status == RecommendationStatus.Approved
@@ -63,8 +64,10 @@ public class LaneControlService(
             LaneState? Locked(int i) => cpDecided
                 .Where(r => r.Status is RecommendationStatus.Approved or RecommendationStatus.Active)
                 .FirstOrDefault(r => r.SlotStartUtc <= slots[i].SlotStartUtc && r.SlotEndUtc > slots[i].SlotStartUtc)?.State;
+            // Only rejected system recommendations constrain the planner; a rejected dispatcher
+            // request says nothing about whether the system's own suggestion is a good idea.
             bool Rejected(int i, LaneState s) => cpDecided.Any(r =>
-                r.Status == RecommendationStatus.Rejected && r.State == s
+                r.Status == RecommendationStatus.Rejected && r.Source == RecommendationSource.System && r.State == s
                 && r.SlotStartUtc <= slots[i].SlotStartUtc && r.SlotEndUtc > slots[i].SlotStartUtc);
 
             var initial = live.GetLaneState(cp.Id);
@@ -124,29 +127,91 @@ public class LaneControlService(
             if (r.SlotEndUtc <= now) { r.Status = RecommendationStatus.Expired; continue; }
             if (r.SlotStartUtc > now) continue;
             r.Status = RecommendationStatus.Active;
-            await ChangeStateAsync(r.ChokePoint!, r.State, SystemActor, $"Applied recommendation #{r.Id} approved by {r.DecidedBy}", ct);
+            var note = r.Source == RecommendationSource.DispatcherRequest
+                ? $"Request #{r.Id} from {r.RequestedBy}, approved"
+                : $"System recommendation #{r.Id}, approved";
+            // The audit credits the admin who made the decision, not the background job applying it.
+            await ChangeStateAsync(r.ChokePoint!, r.State, r.DecidedBy ?? SystemActor, note, ct);
         }
 
         await db.SaveChangesAsync(ct);
     }
 
+    /// <summary>The admin's decision on a system recommendation or a dispatcher request.</summary>
     public async Task<LaneRecommendation?> DecideAsync(int id, bool approve, string actor, string? note, CancellationToken ct)
     {
-        var rec = await db.LaneRecommendations.FirstOrDefaultAsync(r => r.Id == id, ct);
+        var rec = await db.LaneRecommendations.Include(r => r.ChokePoint).FirstOrDefaultAsync(r => r.Id == id, ct);
         if (rec is null || rec.Status != RecommendationStatus.Pending) return null;
 
+        var now = DateTime.UtcNow;
         rec.Status = approve ? RecommendationStatus.Approved : RecommendationStatus.Rejected;
         rec.DecidedBy = actor;
-        rec.DecidedAtUtc = DateTime.UtcNow;
-        if (!string.IsNullOrWhiteSpace(note)) rec.Reason += $" — Note: {note}";
+        rec.DecidedAtUtc = now;
+        if (!string.IsNullOrWhiteSpace(note)) rec.Reason += $" — Admin note: {note.Trim()}";
+
+        // A dispatcher asked for "the next N hours", so the clock starts when the admin approves.
+        if (approve && rec.Source == RecommendationSource.DispatcherRequest && rec.SlotStartUtc < now)
+        {
+            var duration = rec.SlotEndUtc - rec.SlotStartUtc;
+            rec.SlotStartUtc = now;
+            rec.SlotEndUtc = now + duration;
+        }
         await db.SaveChangesAsync(ct);
 
         if (approve) await ApplyDueAsync(ct);
+        if (rec.Source == RecommendationSource.DispatcherRequest)
+            await hub.Clients.All.SendAsync(HubEvents.LaneRequestDecided, rec.ToDto(), ct);
         await hub.Clients.All.SendAsync(HubEvents.RecommendationsUpdated, ct);
         return rec;
     }
 
-    /// <summary>Manual override by a dispatcher, effective immediately.</summary>
+    public const int MaxRequestHours = 8;
+    public const int MaxReasonLength = 300;
+
+    /// <summary>
+    /// A dispatcher asks for a lane change. It waits in the admin's approval queue and only takes
+    /// effect once approved. Returns the request, or an error message for the dispatcher.
+    /// </summary>
+    public async Task<(LaneRecommendation? Request, string? Error)> RequestAsync(LaneChangeRequestDto request, string actor, CancellationToken ct)
+    {
+        var reason = request.Reason?.Trim() ?? "";
+        if (reason.Length == 0) return (null, "Give a reason so the admin can decide.");
+        if (reason.Length > MaxReasonLength) return (null, $"Keep the reason under {MaxReasonLength} characters.");
+        if (request.DurationHours is < 1 or > MaxRequestHours) return (null, $"Choose a duration between 1 and {MaxRequestHours} hours.");
+
+        var cp = await db.ChokePoints.FirstOrDefaultAsync(c => c.Id == request.ChokePointId, ct);
+        if (cp is null) return (null, "Unknown choke point.");
+        if (!TrafficMath.IsAllowed(cp, request.State)) return (null, $"{cp.Name} can't be set to {LaneStateText.Describe(request.State)}.");
+        if (cp.ActiveLaneState == request.State) return (null, $"{cp.Name} is already in that layout.");
+
+        var duplicate = await db.LaneRecommendations.AnyAsync(r => r.ChokePointId == cp.Id
+            && r.Source == RecommendationSource.DispatcherRequest && r.Status == RecommendationStatus.Pending, ct);
+        if (duplicate) return (null, $"There's already a request for {cp.Name} waiting for the admin.");
+
+        var now = DateTime.UtcNow;
+        var rec = new LaneRecommendation
+        {
+            ChokePointId = cp.Id,
+            ChokePoint = cp,
+            State = request.State,
+            SlotStartUtc = now,
+            SlotEndUtc = now.AddHours(request.DurationHours),
+            Reason = $"Dispatcher request: {reason}",
+            Status = RecommendationStatus.Pending,
+            Source = RecommendationSource.DispatcherRequest,
+            RequestedBy = actor,
+            CreatedAtUtc = now
+        };
+        db.LaneRecommendations.Add(rec);
+        await db.SaveChangesAsync(ct);
+
+        logger.LogInformation("{Actor} requested {State} at {ChokePoint} for {Hours} h", actor, request.State, cp.Name, request.DurationHours);
+        await hub.Clients.All.SendAsync(HubEvents.LaneRequestSubmitted, rec.ToDto(), ct);
+        await hub.Clients.All.SendAsync(HubEvents.RecommendationsUpdated, ct);
+        return (rec, null);
+    }
+
+    /// <summary>Direct change by the admin, effective immediately.</summary>
     public async Task<bool> OverrideAsync(int chokePointId, LaneState state, string actor, string? note, CancellationToken ct)
     {
         var cp = await db.ChokePoints.FirstOrDefaultAsync(c => c.Id == chokePointId, ct);
