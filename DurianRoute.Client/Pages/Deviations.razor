@@ -3,22 +3,31 @@
 @implements IDisposable
 @inject ApiClient Api
 @inject TelemetryClient Telemetry
+@inject LiveStore Live
 @inject ISnackbar Snackbar
 
-<PageTitle>Schedule Deviations · DurianRoute</PageTitle>
+<PageTitle>Schedule &amp; headways · DurianRoute</PageTitle>
 
-<MudText Typo="Typo.h5" Class="mb-3">Schedule deviations</MudText>
+<header class="page-head">
+    <div>
+        <h1 class="page-title">Schedule &amp; headways</h1>
+        <p class="page-sub">How far each bus is from its timetable, and the gap to the bus ahead on the same route</p>
+    </div>
+</header>
 
-<MudGrid Spacing="2" Class="mb-2">
-    <MudItem xs="6" md="3"><Stat Label="Buses in service" Value="@_buses.Count.ToString()" /></MudItem>
-    <MudItem xs="6" md="3"><Stat Label="Running late (> 5 min)" Value="@_buses.Values.Count(b => b.DeviationMinutes > 5).ToString()" Color="Color.Error" /></MudItem>
-    <MudItem xs="6" md="3"><Stat Label="Running early (> 4 min)" Value="@_buses.Values.Count(b => b.DeviationMinutes < -4).ToString()" Color="Color.Info" /></MudItem>
-    <MudItem xs="6" md="3"><Stat Label="Average deviation" Value="@(_buses.Count == 0 ? "–" : $"{_buses.Values.Average(b => b.DeviationMinutes):+0.0;-0.0;0.0} min")" /></MudItem>
-</MudGrid>
+<section class="kpis" aria-label="Schedule summary">
+    <div class="kpi"><span class="kpi-label">Buses tracked</span><span class="kpi-value">@Live.Buses.Count</span><span class="kpi-note">@Live.Buses.Count(b => b.Status == BusStatus.Layover) on layover</span></div>
+    <div class="kpi @(Late > 0 ? "kpi-alert" : "")"><span class="kpi-label">Running late</span><span class="kpi-value">@Late</span><span class="kpi-note">more than 5 min behind</span></div>
+    <div class="kpi"><span class="kpi-label">Running early</span><span class="kpi-value">@Early</span><span class="kpi-note">more than 4 min ahead</span></div>
+    <div class="kpi @(Bunching > 0 ? "kpi-warn" : "")"><span class="kpi-label">Bunching</span><span class="kpi-value">@Bunching</span><span class="kpi-note">headway under 3 min</span></div>
+    <div class="kpi kpi-wide"><span class="kpi-label">Average deviation</span><span class="kpi-value">@AvgDeviation<small> min</small></span><span class="kpi-note">positive = behind schedule</span></div>
+    <div class="kpi kpi-wide"><span class="kpi-label">Average headway</span><span class="kpi-value">@AvgHeadway<small> min</small></span><span class="kpi-note">between consecutive buses</span></div>
+</section>
 
 <MudGrid Spacing="2">
     <MudItem xs="12" lg="7">
-        <MudTable T="BusPositionDto" Items="@_buses.Values.OrderByDescending(b => Math.Abs(b.DeviationMinutes))" Dense="true" Hover="true" Elevation="1">
+        <MudTable T="BusPositionDto" Items="@Live.Buses.OrderByDescending(b => LiveStore.IsLate(b) || LiveStore.IsBunching(b)).ThenByDescending(b => Math.Abs(b.DeviationMinutes))"
+                  Dense="true" Hover="true" Elevation="0" Class="card">
             <ToolBarContent><MudText Typo="Typo.h6">Live fleet</MudText></ToolBarContent>
             <HeaderContent>
                 <MudTh>Bus</MudTh>
@@ -26,22 +35,33 @@
                 <MudTh>Direction</MudTh>
                 <MudTh>Next stop</MudTh>
                 <MudTh>Status</MudTh>
+                <MudTh>Headway</MudTh>
                 <MudTh>Deviation</MudTh>
             </HeaderContent>
             <RowTemplate>
-                <MudTd>@context.PlateNumber</MudTd>
+                <MudTd Style="white-space:nowrap"><b>@context.PlateNumber</b></MudTd>
                 <MudTd>@context.RouteCode</MudTd>
                 <MudTd>@context.Direction</MudTd>
                 <MudTd>@context.NextStop</MudTd>
-                <MudTd>@context.Status</MudTd>
-                <MudTd><MudChip T="string" Size="Size.Small" Color="@Format.DeviationColor(context.DeviationMinutes)">@Format.Deviation(context.DeviationMinutes)</MudChip></MudTd>
+                <MudTd Style="white-space:nowrap">@Format.Status(context.Status)</MudTd>
+                <MudTd>
+                    @if (context.HeadwayMinutes is { } h)
+                    {
+                        <span class="@(LiveStore.IsBunching(context) ? "text-warn" : "")">@h.ToString("0.0") min@(LiveStore.IsBunching(context) ? " · bunching" : "")</span>
+                    }
+                    else
+                    {
+                        <span class="muted">lead</span>
+                    }
+                </MudTd>
+                <MudTd Style="white-space:nowrap"><MudChip T="string" Size="Size.Small" Color="@Format.DeviationColor(context.DeviationMinutes)">@Format.Deviation(context.DeviationMinutes)</MudChip></MudTd>
             </RowTemplate>
             <NoRecordsContent><MudText>Waiting for telemetry…</MudText></NoRecordsContent>
         </MudTable>
     </MudItem>
 
     <MudItem xs="12" lg="5">
-        <MudTable T="DeviationAlertDto" Items="_alerts" Dense="true" Hover="true" Elevation="1" Height="560px" FixedHeader="true">
+        <MudTable T="DeviationAlertDto" Items="_alerts" Dense="true" Hover="true" Elevation="0" Height="620px" FixedHeader="true" Class="card">
             <ToolBarContent><MudText Typo="Typo.h6">Alert log</MudText></ToolBarContent>
             <HeaderContent>
                 <MudTh>Time</MudTh>
@@ -62,17 +82,28 @@
 </MudGrid>
 
 @code {
-    private readonly Dictionary<int, BusPositionDto> _buses = [];
     private List<DeviationAlertDto> _alerts = [];
+
+    private int Late => Live.Buses.Count(LiveStore.IsLate);
+    private int Early => Live.Buses.Count(LiveStore.IsEarly);
+    private int Bunching => Live.Buses.Count(LiveStore.IsBunching);
+    private string AvgDeviation => Live.Buses.Count == 0 ? "–" : Live.Buses.Average(b => b.DeviationMinutes).ToString("+0.0;-0.0;0.0");
+    private string AvgHeadway
+    {
+        get
+        {
+            var h = Live.Buses.Where(b => b.HeadwayMinutes is not null).Select(b => b.HeadwayMinutes!.Value).ToList();
+            return h.Count == 0 ? "–" : h.Average().ToString("0.0");
+        }
+    }
 
     protected override async Task OnInitializedAsync()
     {
-        Telemetry.BusPositions += OnPositions;
+        Live.Changed += OnLiveChanged;
         Telemetry.DeviationAlert += OnAlert;
         try
         {
             _alerts = await Api.GetDeviationsAsync(200);
-            await Telemetry.EnsureStartedAsync();
         }
         catch (Exception ex)
         {
@@ -80,11 +111,7 @@
         }
     }
 
-    private void OnPositions(List<BusPositionDto> positions) => InvokeAsync(() =>
-    {
-        foreach (var p in positions) _buses[p.BusId] = p;
-        StateHasChanged();
-    });
+    private void OnLiveChanged() => InvokeAsync(StateHasChanged);
 
     private void OnAlert(DeviationAlertDto alert) => InvokeAsync(() =>
     {
@@ -95,7 +122,7 @@
 
     public void Dispose()
     {
-        Telemetry.BusPositions -= OnPositions;
+        Live.Changed -= OnLiveChanged;
         Telemetry.DeviationAlert -= OnAlert;
     }
 }

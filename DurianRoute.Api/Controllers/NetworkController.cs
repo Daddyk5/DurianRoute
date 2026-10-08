@@ -1,5 +1,7 @@
 using DurianRoute.Api.Data;
+using DurianRoute.Api.Simulation;
 using DurianRoute.Api.Traffic;
+using DurianRoute.Api.Weather;
 using DurianRoute.Shared;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -11,7 +13,7 @@ namespace DurianRoute.Api.Controllers;
 [ApiController]
 [Authorize]
 [Route("api")]
-public class NetworkController(DurianDbContext db, LiveTrafficState live) : ControllerBase
+public class NetworkController(DurianDbContext db, LiveTrafficState live, RouteShapeService shapes, WeatherService weather) : ControllerBase
 {
     [HttpGet("routes")]
     public async Task<List<RouteDto>> Routes(CancellationToken ct)
@@ -21,7 +23,7 @@ public class NetworkController(DurianDbContext db, LiveTrafficState live) : Cont
         {
             var stops = r.Stops.OrderBy(s => s.Sequence).ToList();
             return new RouteDto(r.Id, r.Code, r.Name, r.Color,
-                stops.Select(s => new LatLng(s.Lat, s.Lng)).ToList(),
+                shapes.PathFor(r),
                 stops.Select(s => new StopDto(s.Id, s.Name, s.Lat, s.Lng, s.Sequence)).ToList());
         }).ToList();
     }
@@ -35,6 +37,9 @@ public class NetworkController(DurianDbContext db, LiveTrafficState live) : Cont
 
     [HttpGet("chokepoints/status")]
     public List<ChokePointStatusDto> Status() => live.Snapshot();
+
+    [HttpGet("weather")]
+    public ActionResult<WeatherDto> Weather() => weather.Current is { } w ? w : NoContent();
 
     [HttpGet("deviations")]
     public async Task<List<DeviationAlertDto>> Deviations([FromQuery] int take = 100, CancellationToken ct = default)

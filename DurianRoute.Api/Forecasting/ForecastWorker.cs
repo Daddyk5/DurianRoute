@@ -1,4 +1,5 @@
 using DurianRoute.Api.Data;
+using DurianRoute.Api.Scheduling;
 using DurianRoute.Api.Traffic;
 using DurianRoute.Shared;
 using Microsoft.EntityFrameworkCore;
@@ -53,7 +54,12 @@ public class ForecastWorker(
             await model.TrainAsync(db, ct);
 
         var created = await GenerateForecastsAsync(db, ct);
-        if (created > 0) logger.LogInformation("Generated {Count} hourly forecasts", created);
+        if (created > 0)
+        {
+            logger.LogInformation("Generated {Count} hourly forecasts", created);
+            // Re-plan straight away so recommendations always cover the full new horizon.
+            await scope.ServiceProvider.GetRequiredService<LaneControlService>().PlanAsync(ct);
+        }
     }
 
     /// <summary>Stores observed traffic for every completed hour not yet recorded.</summary>

@@ -1,4 +1,5 @@
 using DurianRoute.Api.Hubs;
+using DurianRoute.Api.Weather;
 using DurianRoute.Shared;
 using Microsoft.AspNetCore.SignalR;
 
@@ -7,6 +8,7 @@ namespace DurianRoute.Api.Traffic;
 /// <summary>Refreshes live choke point conditions and pushes them to every dashboard.</summary>
 public class TrafficSimulator(
     LiveTrafficState state,
+    WeatherService weather,
     IHubContext<TelemetryHub> hub,
     ILogger<TrafficSimulator> logger) : BackgroundService
 {
@@ -20,7 +22,7 @@ public class TrafficSimulator(
         {
             try
             {
-                var statuses = state.Update(DateTime.UtcNow, rng);
+                var statuses = state.Update(DateTime.UtcNow, rng, weather.CapacityFactorNow());
                 await hub.Clients.All.SendAsync(HubEvents.ChokePointStatus, statuses, stoppingToken);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)

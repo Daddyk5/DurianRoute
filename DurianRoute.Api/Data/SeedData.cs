@@ -19,6 +19,13 @@ public static class SeedData
             await db.SaveChangesAsync(ct);
         }
 
+        // Keep route colors in sync with the palette (they must stay distinct from congestion colors).
+        var palette = BuildRoutes().ToDictionary(r => r.Code, r => r.Color);
+        var routesToRecolor = await db.Routes.ToListAsync(ct);
+        foreach (var r in routesToRecolor.Where(r => palette.TryGetValue(r.Code, out var color) && r.Color != color))
+            r.Color = palette[r.Code];
+        await db.SaveChangesAsync(ct);
+
         if (!await db.Users.AnyAsync(ct))
         {
             var hasher = new PasswordHasher<AppUser>();
@@ -38,7 +45,7 @@ public static class SeedData
 
     private static IEnumerable<BusRoute> BuildRoutes()
     {
-        yield return Route("T1", "Toril – Ulas – Bankerohan – San Pedro", "#e53935",
+        yield return Route("T1", "Toril – Ulas – Bankerohan – San Pedro", "#4F46E5",
             ("Toril Public Market", 7.0186, 125.4986),
             ("Crossing Bayabas", 7.0290, 125.5180),
             ("Ulas Junction", 7.0410, 125.5530),
@@ -47,7 +54,7 @@ public static class SeedData
             ("Bankerohan Public Market", 7.0663, 125.6012),
             ("San Pedro / Rizal Park", 7.0731, 125.6128));
 
-        yield return Route("P2", "Panacan – Sasa – Lanang – San Pedro", "#43a047",
+        yield return Route("P2", "Panacan – Sasa – Lanang – San Pedro", "#0891B2",
             ("Panacan Terminal", 7.1480, 125.6600),
             ("Sasa Wharf", 7.1265, 125.6590),
             ("J.P. Laurel – Lanang", 7.0985, 125.6310),
@@ -55,14 +62,14 @@ public static class SeedData
             ("Magsaysay Avenue", 7.0760, 125.6200),
             ("San Pedro / Rizal Park", 7.0731, 125.6128));
 
-        yield return Route("B3", "Buhangin – Bajada – Roxas", "#fb8c00",
+        yield return Route("B3", "Buhangin – Bajada – Roxas", "#C026D3",
             ("Buhangin Crossing", 7.1110, 125.6140),
             ("Cabaguio Avenue", 7.0980, 125.6170),
             ("Bajada (J.P. Laurel)", 7.0875, 125.6135),
             ("Agdao Junction", 7.0830, 125.6150),
             ("Roxas Avenue", 7.0718, 125.6108));
 
-        yield return Route("M4", "Mintal – Ma-a – Bankerohan", "#8e24aa",
+        yield return Route("M4", "Mintal – Ma-a – Bankerohan", "#78350F",
             ("Mintal", 7.0905, 125.5000),
             ("Catalunan Grande", 7.0760, 125.5450),
             ("Ma-a Diversion", 7.0830, 125.5830),

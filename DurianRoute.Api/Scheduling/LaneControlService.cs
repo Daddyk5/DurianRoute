@@ -1,6 +1,7 @@
 using DurianRoute.Api.Data;
 using DurianRoute.Api.Hubs;
 using DurianRoute.Api.Traffic;
+using DurianRoute.Api.Weather;
 using DurianRoute.Shared;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
@@ -15,6 +16,7 @@ namespace DurianRoute.Api.Scheduling;
 public class LaneControlService(
     DurianDbContext db,
     LiveTrafficState live,
+    WeatherService weather,
     IHubContext<TelemetryHub> hub,
     IOptions<LaneSchedulerOptions> options,
     ILogger<LaneControlService> logger)
@@ -215,7 +217,8 @@ public class LaneControlService(
                 outbound.PredictedVolume * outAdj,
                 inbound.PredictedBusPassengers * inAdj,
                 outbound.PredictedBusPassengers * outAdj,
-                i == 0 ? live.CapacityFactor(cp.Id, now) : 1.0));
+                // Slot 0 uses live conditions (incidents and current rain); later hours use the rain forecast.
+                i == 0 ? live.CapacityFactor(cp.Id, now) : weather.CapacityFactorAt(hour)));
         }
         return slots;
     }

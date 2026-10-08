@@ -7,8 +7,8 @@ namespace DurianRoute.Api.Simulation;
 public record DeviationEvent(int BusId, string PlateNumber, string RouteCode, double DeviationMinutes, string NearStop, string Message);
 
 /// <summary>
-/// Simulated public utility buses moving along their routes. Thread-safe singleton; the
-/// <see cref="BusSimulator"/> advances it and the hub issues dispatcher commands against it.
+/// Simulated public utility buses moving along their routes' road geometry. Thread-safe singleton;
+/// the <see cref="BusSimulator"/> advances it and the hub issues dispatcher commands against it.
 /// </summary>
 public class FleetState
 {
@@ -26,8 +26,10 @@ public class FleetState
         public required int Id { get; init; }
         public required string Code { get; init; }
         public required List<Stop> Stops { get; init; }
-        public required double[] StopDistance { get; init; }   // cumulative meters from stop 0
-        public double Length => StopDistance[^1];
+        public required LatLng[] Path { get; init; }
+        public required double[] PathDistance { get; init; }   // cumulative meters along Path
+        public required double[] StopDistance { get; init; }   // each stop's position along Path
+        public double Length => PathDistance[^1];
     }
 
     private sealed class BusSim
@@ -44,11 +46,13 @@ public class FleetState
         public DateTime? HeldUntilUtc { get; set; }
         public double SpeedMps { get; set; }
         public double DeviationMinutes { get; set; }
+        public double? HeadwayMinutes { get; set; }
         public int AlertBucket { get; set; }                // -1 early, 0 on time, 1 late
         public BusStatus Status { get; set; }
     }
 
-    public void Initialize(IEnumerable<BusRoute> routes)
+    /// <param name="paths">Road geometry per route id; routes without one use straight lines between stops.</param>
+    public void Initialize(IEnumerable<BusRoute> routes, IReadOnlyDictionary<int, List<LatLng>>? paths = null)
     {
         lock (_gate)
         {
@@ -59,11 +63,10 @@ public class FleetState
                 var stops = route.Stops.OrderBy(s => s.Sequence).ToList();
                 if (stops.Count < 2) continue;
 
-                var cumulative = new double[stops.Count];
-                for (var i = 1; i < stops.Count; i++)
-                    cumulative[i] = cumulative[i - 1] + Geo.DistanceMeters(stops[i - 1].Lat, stops[i - 1].Lng, stops[i].Lat, stops[i].Lng);
-
-                var geometry = new RouteGeometry { Id = route.Id, Code = route.Code, Stops = stops, StopDistance = cumulative };
+                var path = paths is not null && paths.TryGetValue(route.Id, out var p) && p.Count >= 2
+                    ? p.ToArray()
+                    : stops.Select(s => new LatLng(s.Lat, s.Lng)).ToArray();
+                var geometry = BuildGeometry(route, stops, path);
                 _routes[route.Id] = geometry;
 
                 // Stagger the fleet along the route, alternating directions.
@@ -84,6 +87,38 @@ public class FleetState
                 }
             }
         }
+    }
+
+    private static RouteGeometry BuildGeometry(BusRoute route, List<Stop> stops, LatLng[] path)
+    {
+        var cumulative = new double[path.Length];
+        for (var i = 1; i < path.Length; i++)
+            cumulative[i] = cumulative[i - 1] + Geo.DistanceMeters(path[i - 1].Lat, path[i - 1].Lng, path[i].Lat, path[i].Lng);
+
+        // Place each stop at the nearest path vertex after the previous stop, so stops stay in order.
+        var stopDistance = new double[stops.Count];
+        var from = 0;
+        for (var s = 0; s < stops.Count; s++)
+        {
+            if (s == 0) { stopDistance[s] = 0; continue; }
+            if (s == stops.Count - 1) { stopDistance[s] = cumulative[^1]; continue; }
+
+            var best = from;
+            var bestDistance = double.MaxValue;
+            for (var i = from; i < path.Length; i++)
+            {
+                var d = Geo.DistanceMeters(stops[s].Lat, stops[s].Lng, path[i].Lat, path[i].Lng);
+                if (d < bestDistance) { bestDistance = d; best = i; }
+            }
+            stopDistance[s] = Math.Max(cumulative[best], stopDistance[s - 1]);
+            from = best;
+        }
+
+        return new RouteGeometry
+        {
+            Id = route.Id, Code = route.Code, Stops = stops,
+            Path = path, PathDistance = cumulative, StopDistance = stopDistance
+        };
     }
 
     public bool Hold(int busId, int minutes, DateTime nowUtc)
@@ -121,9 +156,12 @@ public class FleetState
         lock (_gate)
         {
             foreach (var bus in _buses.Values)
-            {
                 Advance(bus, nowUtc, simSeconds, traffic, rng);
 
+            UpdateHeadways();
+
+            foreach (var bus in _buses.Values)
+            {
                 var (lat, lng, heading) = Locate(bus);
                 var nextStop = bus.NextStopIndex < bus.Route.Stops.Count
                     ? TripStop(bus.Route, bus.Direction, bus.NextStopIndex).Name
@@ -133,7 +171,8 @@ public class FleetState
                     bus.BusId, bus.Plate, bus.Route.Id, bus.Route.Code,
                     Math.Round(lat, 6), Math.Round(lng, 6), Math.Round(heading),
                     Math.Round(bus.SpeedMps * 3.6, 1), bus.Direction, nextStop,
-                    Math.Round(bus.DeviationMinutes, 1), bus.Status, nowUtc));
+                    Math.Round(bus.DeviationMinutes, 1), bus.Status, nowUtc,
+                    bus.HeadwayMinutes is { } h ? Math.Round(h, 1) : null));
 
                 var bucket = bus.DeviationMinutes > LateThresholdMinutes ? 1
                     : bus.DeviationMinutes < EarlyThresholdMinutes ? -1 : 0;
@@ -153,6 +192,18 @@ public class FleetState
         }
 
         return (positions, events);
+    }
+
+    /// <summary>Minutes to the next bus ahead on the same route and direction (null for the lead bus).</summary>
+    private void UpdateHeadways()
+    {
+        foreach (var group in _buses.Values.GroupBy(b => (b.Route.Id, b.Direction)))
+        {
+            var ordered = group.Where(b => b.LayoverRemaining <= 0).OrderByDescending(b => b.DistanceM).ToList();
+            for (var i = 0; i < ordered.Count; i++)
+                ordered[i].HeadwayMinutes = i == 0 ? null : (ordered[i - 1].DistanceM - ordered[i].DistanceM) / PlannedSpeedMps / 60;
+            foreach (var b in group.Where(b => b.LayoverRemaining > 0)) b.HeadwayMinutes = null;
+        }
     }
 
     private static void Advance(BusSim bus, DateTime nowUtc, double dt, LiveTrafficState traffic, Random rng)
@@ -248,13 +299,14 @@ public class FleetState
         var forward = bus.Direction == TravelDirection.Inbound ? bus.DistanceM : r.Length - bus.DistanceM;
         forward = Math.Clamp(forward, 0, r.Length);
 
-        var seg = 0;
-        while (seg < r.StopDistance.Length - 2 && r.StopDistance[seg + 1] < forward) seg++;
+        // Binary search for the path segment containing this distance.
+        var index = Array.BinarySearch(r.PathDistance, forward);
+        var seg = index >= 0 ? Math.Min(index, r.Path.Length - 2) : Math.Clamp(~index - 1, 0, r.Path.Length - 2);
 
-        var a = r.Stops[seg];
-        var b = r.Stops[seg + 1];
-        var segLength = r.StopDistance[seg + 1] - r.StopDistance[seg];
-        var t = segLength <= 0 ? 0 : (forward - r.StopDistance[seg]) / segLength;
+        var a = r.Path[seg];
+        var b = r.Path[seg + 1];
+        var segLength = r.PathDistance[seg + 1] - r.PathDistance[seg];
+        var t = segLength <= 0 ? 0 : (forward - r.PathDistance[seg]) / segLength;
 
         var lat = a.Lat + (b.Lat - a.Lat) * t;
         var lng = a.Lng + (b.Lng - a.Lng) * t;

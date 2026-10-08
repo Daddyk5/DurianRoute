@@ -28,6 +28,15 @@ public static class Format
 
     public static string Lane(LaneState state) => LaneStateText.Describe(state);
 
+    public static string Status(BusStatus s) => s switch
+    {
+        BusStatus.InService => "Moving",
+        BusStatus.AtStop => "At stop",
+        BusStatus.Layover => "Layover",
+        BusStatus.Held => "Held by dispatcher",
+        _ => s.ToString()
+    };
+
     public static Color StatusColor(RecommendationStatus status) => status switch
     {
         RecommendationStatus.Pending => Color.Warning,

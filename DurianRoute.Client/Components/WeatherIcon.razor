@@ -1,0 +1,27 @@
+@* Maps a WMO weather code to a Material icon. *@
+<MudIcon Icon="@IconFor(Code, IsDay)" Size="@Size" Style="@($"color:{ColorFor(Code)}")" />
+
+@code {
+    [Parameter] public int Code { get; set; }
+    [Parameter] public bool IsDay { get; set; } = true;
+    [Parameter] public Size Size { get; set; } = Size.Medium;
+
+    public static string IconFor(int code, bool isDay) => code switch
+    {
+        0 or 1 => isDay ? Icons.Material.Filled.WbSunny : Icons.Material.Filled.Nightlight,
+        2 => isDay ? Icons.Material.Filled.WbCloudy : Icons.Material.Filled.NightsStay,
+        3 => Icons.Material.Filled.Cloud,
+        45 or 48 => Icons.Material.Filled.Dehaze,
+        >= 51 and <= 67 or >= 80 and <= 82 => Icons.Material.Filled.Umbrella,
+        >= 95 => Icons.Material.Filled.Thunderstorm,
+        _ => Icons.Material.Filled.Cloud
+    };
+
+    private static string ColorFor(int code) => code switch
+    {
+        0 or 1 => "#F59E0B",
+        2 or 3 or 45 or 48 => "#94A3B8",
+        >= 95 => "#7C3AED",
+        _ => "#0EA5E9"
+    };
+}

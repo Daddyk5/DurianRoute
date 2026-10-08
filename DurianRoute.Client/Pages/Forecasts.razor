@@ -3,14 +3,18 @@
 @implements IAsyncDisposable
 @inject ApiClient Api
 @inject IJSRuntime JS
+@inject ThemeService ThemeState
 @inject ISnackbar Snackbar
 @using Plotly.Blazor.Traces
 
 <PageTitle>Predictive Heatmap · DurianRoute</PageTitle>
 
-<div class="d-flex align-center mb-3 flex-wrap gap-2">
-    <MudText Typo="Typo.h5">Predictive traffic heatmap — next 24 hours</MudText>
-    <MudSpacer />
+<header class="page-head">
+    <div>
+        <h1 class="page-title">Forecasts</h1>
+        <p class="page-sub">ML.NET congestion forecast for every choke point over the next 24 hours</p>
+    </div>
+    <div class="d-flex align-center gap-2 flex-wrap">
     <MudToggleGroup T="string" @bind-Value="_view" @bind-Value:after="RefreshChartsAsync" Size="Size.Small" Color="Color.Primary">
         <MudToggleItem Value="@("worst")" Text="Worst direction" />
         <MudToggleItem Value="@("in")" Text="Inbound" />
@@ -22,6 +26,7 @@
         </MudButton>
     </AuthorizeView>
 </div>
+</header>
 
 <MudGrid Spacing="2" Class="mb-2">
     @if (_metrics is { } m)
@@ -137,7 +142,7 @@
     {
         if (!firstRender) return;
         await _loading;
-        await JS.InvokeVoidAsync("durianMap.init", MapId, null);
+        await JS.InvokeVoidAsync("durianMap.init", MapId, null, new { dark = ThemeState.IsDark });
         _mapReady = true;
         await ShowMapHourAsync();
     }

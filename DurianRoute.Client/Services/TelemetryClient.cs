@@ -17,6 +17,7 @@ public class TelemetryClient(SessionStore session, IConfiguration config) : IAsy
     public event Action<DeviationAlertDto>? DeviationAlert;
     public event Action<LaneConfigChangedDto>? LaneConfigChanged;
     public event Action? RecommendationsUpdated;
+    public event Action<WeatherDto>? Weather;
     public event Action<HubConnectionState>? StateChanged;
 
     public HubConnectionState State => _connection?.State ?? HubConnectionState.Disconnected;
@@ -70,6 +71,7 @@ public class TelemetryClient(SessionStore session, IConfiguration config) : IAsy
         connection.On<DeviationAlertDto>(HubEvents.DeviationAlert, a => DeviationAlert?.Invoke(a));
         connection.On<LaneConfigChangedDto>(HubEvents.LaneConfigChanged, c => LaneConfigChanged?.Invoke(c));
         connection.On(HubEvents.RecommendationsUpdated, () => RecommendationsUpdated?.Invoke());
+        connection.On<WeatherDto>(HubEvents.Weather, w => Weather?.Invoke(w));
 
         connection.Reconnecting += _ => { StateChanged?.Invoke(HubConnectionState.Reconnecting); return Task.CompletedTask; };
         connection.Reconnected += _ => { StateChanged?.Invoke(HubConnectionState.Connected); return Task.CompletedTask; };

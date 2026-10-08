@@ -8,6 +8,7 @@ public class LiveTrafficState
 {
     private readonly Lock _gate = new();
     private readonly Dictionary<int, Entry> _entries = [];
+    private double _weatherFactor = 1.0;
 
     private sealed class Entry
     {
@@ -60,18 +61,21 @@ public class LiveTrafficState
     {
         lock (_gate)
         {
-            return _entries.TryGetValue(chokePointId, out var e) && e.IncidentUntilUtc > nowUtc ? 0.6 : 1.0;
+            var incident = _entries.TryGetValue(chokePointId, out var e) && e.IncidentUntilUtc > nowUtc ? 0.6 : 1.0;
+            return incident * _weatherFactor;
         }
     }
 
     /// <summary>Advances the live state by one tick and returns the new statuses.</summary>
-    public List<ChokePointStatusDto> Update(DateTime nowUtc, Random rng)
+    /// <param name="weatherFactor">Road capacity multiplier from current weather (1.0 = dry).</param>
+    public List<ChokePointStatusDto> Update(DateTime nowUtc, Random rng, double weatherFactor = 1.0)
     {
         var hour = new DateTime(nowUtc.Year, nowUtc.Month, nowUtc.Day, nowUtc.Hour, 0, 0, DateTimeKind.Utc);
         var result = new List<ChokePointStatusDto>();
 
         lock (_gate)
         {
+            _weatherFactor = weatherFactor;
             foreach (var e in _entries.Values)
             {
                 var cp = e.ChokePoint;
@@ -83,7 +87,7 @@ public class LiveTrafficState
                     e.IncidentUntilUtc = nowUtc.AddMinutes(rng.Next(20, 51));
 
                 var incident = e.IncidentUntilUtc > nowUtc;
-                var capFactor = incident ? 0.6 : 1.0;
+                var capFactor = (incident ? 0.6 : 1.0) * weatherFactor;
                 var alloc = TrafficMath.Allocate(cp, cp.ActiveLaneState);
                 var vcIn = TrafficMath.VolumeToCapacity(e.InboundVolume, alloc.InboundCarLanes, cp.LaneCapacityVph, capFactor);
                 var vcOut = TrafficMath.VolumeToCapacity(e.OutboundVolume, alloc.OutboundCarLanes, cp.LaneCapacityVph, capFactor);
@@ -94,7 +98,7 @@ public class LiveTrafficState
                     Math.Round(vcIn, 2), Math.Round(vcOut, 2),
                     Math.Round(TrafficMath.BprDelay(cp.FreeFlowMinutes, vcIn), 1),
                     Math.Round(TrafficMath.BprDelay(cp.FreeFlowMinutes, vcOut), 1),
-                    incident, cp.ActiveLaneState, nowUtc);
+                    incident, cp.ActiveLaneState, nowUtc, Math.Round(capFactor, 2));
                 result.Add(e.Status);
             }
         }
@@ -127,8 +131,10 @@ public class LiveTrafficState
                 var t0 = e.ChokePoint.FreeFlowMinutes;
                 return Math.Clamp(t0 / (t0 + TrafficMath.BprDelay(t0, vc)), 0.12, 1.0);
             }
+
+            // Away from choke points, wet roads still slow buses a little.
+            return 1 - (1 - _weatherFactor) * 0.6;
         }
-        return 1.0;
     }
 
     private static double Jitter(Random rng) => 0.97 + rng.NextDouble() * 0.06;

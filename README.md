@@ -4,20 +4,21 @@
 
 DurianRoute is a dispatch dashboard for the City Transport and Traffic Management Office (CTTMO). It tracks public utility buses live, forecasts congestion at major choke points 24 hours ahead with ML.NET, and recommends reversible-lane and bus-priority-lane schedules that a dispatcher approves or rejects.
 
-![Live map](docs/screenshots/02-live-map.png)
+![Operations dashboard](docs/screenshots/02-live-map.png)
 
 **Portfolio case study:** [docs/index.html](docs/index.html). It's a standalone page; open it in a browser, or enable GitHub Pages (Settings → Pages → branch `main`, folder `/docs`) to publish it.
 
-> **Data note:** traffic volumes and bus movements are simulated. They follow Davao commuter patterns (inbound AM peak, outbound PM peak, weekends, holidays and Kadayawan, paydays, afternoon rain), and the code is built to take real CTTMO counts in their place. Coordinates are approximate and routes are drawn as straight lines between stops.
+> **Data note:** traffic volumes and bus movements are simulated. They follow Davao commuter patterns (inbound AM peak, outbound PM peak, weekends, holidays and Kadayawan, paydays, afternoon rain), and the code is built to take real CTTMO counts in their place. Stop and choke point coordinates are approximate. Weather is real: live Davao City conditions from Open-Meteo.
 
 ## Features
 
 | Objective | What it does | Where |
 |---|---|---|
-| Real-time telemetry | SignalR streams bus positions every second, grouped per route. Dispatchers can hold and release buses from the map. | `DurianRoute.Api/Hubs`, `DurianRoute.Api/Simulation` |
+| Real-time telemetry | SignalR streams bus positions every second, grouped per route. Buses drive along real Davao roads (OpenStreetMap routing via OSRM), and each bus reports its headway to the bus ahead so bunching is flagged. Dispatchers can hold and release buses from the map. | `DurianRoute.Api/Hubs`, `DurianRoute.Api/Simulation` |
 | Predictive analytics | An ML.NET FastTree regression forecasts hourly vehicle volume per choke point and direction, 24 hours ahead. | `DurianRoute.Api/Forecasting` |
-| Lane scheduling | Dynamic programming picks the lane layout for each hour that minimizes total person-minutes of delay. | `DurianRoute.Api/Scheduling` |
-| Admin dashboard | Blazor WebAssembly + MudBlazor app with a live map, schedule deviations, lane management and a predictive heatmap. Uses JWT login and role-based access. | `DurianRoute.Client` |
+| Lane scheduling | Dynamic programming picks the lane layout for each hour that minimizes total person-minutes of delay. Forecast rain lowers road capacity in the plan. | `DurianRoute.Api/Scheduling` |
+| Live weather | Current Davao weather and a 24-hour outlook from Open-Meteo (free, no key). Rain cuts choke point capacity by 8–25% and slows buses. | `DurianRoute.Api/Weather` |
+| Dispatcher dashboard | Blazor WebAssembly + MudBlazor console: an Operations page with KPIs, a live map with a congestion layer and route filters, a fleet panel with search and bunching/late filters, weather, and an activity feed; plus schedule and headways, lane management and forecasts. Light and dark themes, JWT login and role-based access. | `DurianRoute.Client` |
 
 ## Results
 
@@ -31,11 +32,11 @@ Model evaluated on a 14-day time-based holdout:
 
 That is about 22% lower MAE than the baseline.
 
-Lane plan generated for a weekday (PH time):
+Example lane plan for a weekday (PH time):
 
-| Choke point | 06:00–09:00 | 09:00–16:00 | 16:00–23:00 |
+| Choke point | 06:00–09:00 | 09:00–16:00 | 16:00–21:00 |
 |---|---|---|---|
-| Matina Crossing | Reversible lane → inbound | Bus priority lane (inbound) | Reversible lane → outbound |
+| Matina Crossing | Reversible lane → inbound | Bus priority lane (outbound) | Reversible lane → outbound |
 | J.P. Laurel – Lanang | Reversible lane → inbound | Bus priority lane (inbound) | Reversible lane → outbound |
 
 ## How the lane scheduler works
@@ -64,21 +65,23 @@ All cost parameters are in `appsettings.json` under `LaneScheduler` and should b
 
 ```
 DurianRoute.Client (Blazor WASM + MudBlazor + Leaflet + Plotly)
-        │  REST (JWT)            ▲ SignalR (positions, alerts, lane changes)
+        │  REST (JWT)            ▲ SignalR (positions, traffic, weather, alerts, lane changes)
         ▼                        │
 DurianRoute.Api (ASP.NET Core)
   ├─ TelemetryHub ─────────── FleetState ◄── BusSimulator (1 s)
   ├─ Controllers              LiveTrafficState ◄── TrafficSimulator (10 s)
   ├─ ForecastWorker (hourly): record history → train ML.NET → forecast 24 h
   ├─ LaneWorker (30 s): apply approved changes, re-plan every 15 min
+  ├─ WeatherWorker (10 min): Open-Meteo → road capacity factor
+  ├─ RouteShapeService: OSRM road geometry, cached in App_Data
   └─ EF Core → SQLite (default) or SQL Server
 DurianRoute.Shared — DTOs used by both sides
-DurianRoute.Tests  — xUnit (49 tests)
+DurianRoute.Tests  — xUnit (62 tests)
 ```
 
 ## Getting started
 
-Requirements: [.NET 10 SDK](https://dotnet.microsoft.com/download).
+Requirements: [.NET 10 SDK](https://dotnet.microsoft.com/download) and an internet connection on first start (road geometry, weather and map tiles). Without one, routes fall back to straight lines and the weather panel stays empty.
 
 ```bash
 # terminal 1 — API, simulation, ML (first start takes ~30 s to build history and train)
@@ -118,12 +121,16 @@ The API creates the tables and seed data on first start.
 
 | | |
 |---|---|
-| ![Login](docs/screenshots/01-login.png) | ![Schedule deviations](docs/screenshots/03-deviations.png) |
-| ![Lane management](docs/screenshots/04-lanes.png) | ![Predictive heatmap](docs/screenshots/05-forecasts.png) |
+| ![Sign-in](docs/screenshots/01-login.png) | ![Dark mode](docs/screenshots/06-operations-dark.png) |
+| ![Selected bus on a real road](docs/screenshots/07-bus-selected.png) | ![Live weather](docs/screenshots/08-weather.png) |
+| ![Schedule and headways](docs/screenshots/03-deviations.png) | ![Lane management](docs/screenshots/04-lanes.png) |
+| ![Forecasts](docs/screenshots/05-forecasts.png) | ![Mobile sign-in](docs/screenshots/09-login-mobile.png) |
 
 ## Tech stack
 
-.NET 10 · ASP.NET Core · SignalR · ML.NET (FastTree) · Entity Framework Core (SQLite / SQL Server) · Blazor WebAssembly · MudBlazor · Leaflet + OpenStreetMap · Plotly.Blazor · xUnit
+.NET 10 · ASP.NET Core · SignalR · ML.NET (FastTree) · Entity Framework Core (SQLite / SQL Server) · Blazor WebAssembly · MudBlazor · Leaflet · Plotly.Blazor · xUnit
+
+Data services: road routing from [OSRM](https://project-osrm.org/) on OpenStreetMap data, weather from [Open-Meteo](https://open-meteo.com/), base maps from Esri. None of them need an API key.
 
 ## Security
 

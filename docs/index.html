@@ -159,8 +159,8 @@ footer { border-top: 1px solid var(--line); padding-top: 24px; display: flex; fl
       <span><b>Source</b> <a href="https://github.com/Daddyk5/DurianRoute">GitHub · Daddyk5</a></span>
     </div>
     <figure class="figure">
-      <div class="shot"><img src="screenshots/02-live-map.png" alt="Live dispatch map of Davao City with 16 buses on four colored routes, a selected bus held by the dispatcher, and live congestion at eight choke points" width="1440" height="900"></div>
-      <figcaption>Live map: 16 simulated buses on four routes, updated every second. A dispatcher has just held bus P2-102 to fix bunching.</figcaption>
+      <div class="shot"><img src="screenshots/02-live-map.png" alt="DurianRoute operations dashboard: summary tiles, a map of Davao City with four colored bus routes on real roads and choke point markers, and a fleet list" width="1600" height="960"></div>
+      <figcaption>Operations dashboard: 16 simulated buses on four routes that follow real Davao roads, with live congestion, live weather and a fleet panel. Positions update every second.</figcaption>
     </figure>
   </header>
 
@@ -168,7 +168,7 @@ footer { border-top: 1px solid var(--line); padding-top: 24px; display: flex; fl
     <div><strong class="num">0.986</strong><span>R² on a 14-day holdout</span></div>
     <div><strong class="num">22%</strong><span>lower error than "same hour last week"</span></div>
     <div><strong class="num">1 s</strong><span>bus position updates over SignalR</span></div>
-    <div><strong class="num">49</strong><span>automated tests, incl. a proof of optimality</span></div>
+    <div><strong class="num">62</strong><span>automated tests, incl. a proof of optimality</span></div>
   </section>
 
   <section class="stack col">
@@ -189,7 +189,7 @@ footer { border-top: 1px solid var(--line); padding-top: 24px; display: flex; fl
         <div class="dot">1</div>
         <div class="body">
           <h3>Track</h3>
-          <p>A simulated fleet streams positions over SignalR. The server pushes to each route's group, so a dashboard only receives the routes it watches. Commands go the other way: a dispatcher can hold or release a bus from the map.</p>
+          <p>A simulated fleet drives along real Davao roads and streams positions over SignalR. The server pushes to each route's group, so a dashboard only receives the routes it watches. Commands go the other way: a dispatcher can hold or release a bus to fix bunching.</p>
           <span class="tag">SignalR · ASP.NET Core background services</span>
         </div>
       </div>
@@ -197,7 +197,7 @@ footer { border-top: 1px solid var(--line); padding-top: 24px; display: flex; fl
         <div class="dot">2</div>
         <div class="body">
           <h3>Forecast</h3>
-          <p>Every hour, an ML.NET gradient-boosted tree predicts vehicle volume for each choke point and direction over the next 24 hours. It uses the hour, the day, holidays, school days, paydays, and the same hour yesterday and last week.</p>
+          <p>Every hour, an ML.NET gradient-boosted tree predicts vehicle volume for each choke point and direction over the next 24 hours. It uses the hour, the day, holidays, school days, paydays, and the same hour yesterday and last week. Live weather from Open-Meteo lowers road capacity when it rains.</p>
           <span class="tag">ML.NET FastTree · retrained daily</span>
         </div>
       </div>

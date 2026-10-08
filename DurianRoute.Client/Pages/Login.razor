@@ -1,33 +1,85 @@
 @page "/login"
+@layout EmptyLayout
+@using Microsoft.AspNetCore.Components.WebAssembly.Hosting
 @inject ApiClient Api
 @inject SessionStore Session
 @inject NavigationManager Nav
+@inject Microsoft.AspNetCore.Components.WebAssembly.Hosting.IWebAssemblyHostEnvironment HostEnv
 
 <PageTitle>Sign in · DurianRoute</PageTitle>
 
-<MudGrid Justify="Justify.Center" Class="mt-10">
-    <MudItem xs="12" sm="8" md="5" lg="4">
-        <MudPaper Elevation="3" Class="pa-6">
-            <MudText Typo="Typo.h5" GutterBottom="true">CTTMO Dispatcher Sign-in</MudText>
-            <MudText Typo="Typo.body2" Class="mb-4" Color="Color.Secondary">DurianRoute smart transit dashboard</MudText>
+<div class="auth">
+    <section class="auth-brand" aria-label="About DurianRoute">
+        <svg class="auth-routes" viewBox="0 0 600 800" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+            <path d="M-40 620 C 120 540, 180 700, 320 600 S 520 470, 660 540" />
+            <path d="M-40 300 C 90 360, 210 220, 330 300 S 520 380, 660 260" />
+            <path d="M120 -40 C 160 140, 60 260, 180 420 S 260 700, 200 860" />
+            <circle cx="320" cy="600" r="7" /><circle cx="330" cy="300" r="7" />
+        </svg>
+        <div class="auth-brand-inner">
+            <Logo Size="72" />
+            <h1 class="auth-title">Durian<span>Route</span></h1>
+            <p class="auth-tagline">Smart transit dispatch for Davao City</p>
+            <ul class="auth-points">
+                <li><MudIcon Icon="@Icons.Material.Filled.Sensors" Size="Size.Small" /> Live bus tracking on real Davao roads</li>
+                <li><MudIcon Icon="@Icons.Material.Filled.Insights" Size="Size.Small" /> 24-hour congestion forecasts with ML.NET</li>
+                <li><MudIcon Icon="@Icons.Material.Filled.AltRoute" Size="Size.Small" /> Optimized reversible and bus-lane schedules</li>
+                <li><MudIcon Icon="@Icons.Material.Filled.Umbrella" Size="Size.Small" /> Live weather that adjusts road capacity</li>
+            </ul>
+            <p class="auth-foot">City Transport and Traffic Management Office</p>
+        </div>
+    </section>
+
+    <section class="auth-form-wrap">
+        <MudPaper Elevation="0" Class="auth-card">
+            <div class="auth-mobile-logo"><Logo Size="44" ShowWordmark="true" /></div>
+            <MudText Typo="Typo.h5">Welcome back</MudText>
+            <MudText Typo="Typo.body2" Class="mb-6 muted">Sign in to the dispatcher console.</MudText>
 
             <EditForm Model="_model" OnValidSubmit="SignInAsync">
                 <DataAnnotationsValidator />
-                <MudTextField @bind-Value="_model.UserName" Label="Username" Variant="Variant.Outlined"
-                              For="@(() => _model.UserName)" Class="mb-3" autocomplete="username" />
-                <MudTextField @bind-Value="_model.Password" Label="Password" Variant="Variant.Outlined" InputType="InputType.Password"
-                              For="@(() => _model.Password)" Class="mb-3" autocomplete="current-password" />
-                @if (_error is not null)
-                {
-                    <MudAlert Severity="Severity.Error" Dense="true" Class="mb-3">@_error</MudAlert>
-                }
-                <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary" FullWidth="true" Disabled="_busy">
-                    @(_busy ? "Signing in…" : "Sign in")
-                </MudButton>
+                <div class="d-flex flex-column gap-4">
+                    <MudTextField @bind-Value="_model.UserName" Label="Username" Variant="Variant.Outlined" For="@(() => _model.UserName)"
+                                  Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Outlined.Person" autocomplete="username" id="username" />
+                    <MudTextField @bind-Value="_model.Password" Label="Password" Variant="Variant.Outlined" For="@(() => _model.Password)"
+                                  InputType="@(_showPassword ? InputType.Text : InputType.Password)"
+                                  Adornment="Adornment.End" AdornmentIcon="@(_showPassword ? Icons.Material.Outlined.VisibilityOff : Icons.Material.Outlined.Visibility)"
+                                  OnAdornmentClick="@(() => _showPassword = !_showPassword)" AdornmentAriaLabel="Show or hide password"
+                                  autocomplete="current-password" id="password" />
+                    @if (_error is not null)
+                    {
+                        <MudAlert Severity="Severity.Error" Dense="true" Variant="Variant.Outlined">@_error</MudAlert>
+                    }
+                    <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary" Size="Size.Large"
+                               FullWidth="true" Disabled="_busy" Class="auth-submit">
+                        @if (_busy)
+                        {
+                            <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+                            <span>Signing in…</span>
+                        }
+                        else
+                        {
+                            <span>Sign in</span>
+                        }
+                    </MudButton>
+                </div>
             </EditForm>
+
+            @if (HostEnv.IsDevelopment())
+            {
+                <div class="demo-accounts">
+                    <MudText Typo="Typo.caption" Class="muted">Demo accounts (development only)</MudText>
+                    <div class="d-flex gap-2 flex-wrap">
+                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Icon="@Icons.Material.Outlined.SupportAgent"
+                                 OnClick="@(() => Fill("dispatcher", "Dispatch#2026"))">dispatcher</MudChip>
+                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Icon="@Icons.Material.Outlined.AdminPanelSettings"
+                                 OnClick="@(() => Fill("admin", "Admin#2026"))">admin</MudChip>
+                    </div>
+                </div>
+            }
         </MudPaper>
-    </MudItem>
-</MudGrid>
+    </section>
+</div>
 
 @code {
     [SupplyParameterFromQuery] public string? ReturnUrl { get; set; }
@@ -35,11 +87,19 @@
     private readonly LoginModel _model = new();
     private string? _error;
     private bool _busy;
+    private bool _showPassword;
 
     private class LoginModel
     {
         [System.ComponentModel.DataAnnotations.Required] public string UserName { get; set; } = "";
         [System.ComponentModel.DataAnnotations.Required] public string Password { get; set; } = "";
+    }
+
+    private void Fill(string user, string password)
+    {
+        _model.UserName = user;
+        _model.Password = password;
+        _error = null;
     }
 
     private async Task SignInAsync()
@@ -51,7 +111,7 @@
             var session = await Api.LoginAsync(_model.UserName, _model.Password);
             if (session is null)
             {
-                _error = "Invalid username or password.";
+                _error = "That username and password don't match. Check them and try again.";
                 return;
             }
             await Session.SignInAsync(session);
@@ -61,7 +121,7 @@
         }
         catch (Exception ex)
         {
-            _error = ex is ApiException ? ex.Message : "Cannot reach the DurianRoute server.";
+            _error = ex is ApiException ? ex.Message : "Can't reach the DurianRoute server. Make sure the API is running.";
         }
         finally
         {

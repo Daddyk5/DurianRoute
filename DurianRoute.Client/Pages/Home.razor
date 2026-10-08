@@ -3,87 +3,327 @@
 @implements IAsyncDisposable
 @inject ApiClient Api
 @inject TelemetryClient Telemetry
+@inject LiveStore Live
+@inject ThemeService ThemeState
 @inject IJSRuntime JS
 @inject ISnackbar Snackbar
 
-<PageTitle>Live Map · DurianRoute</PageTitle>
+<PageTitle>Operations · DurianRoute</PageTitle>
 
-<MudGrid Spacing="2">
-    <MudItem xs="12" lg="9">
-        <MudPaper Elevation="1" Class="pa-2">
-            <div class="d-flex align-center flex-wrap gap-2 mb-2">
-                <MudText Typo="Typo.h6" Class="mr-2">Live bus tracking</MudText>
-                @foreach (var route in _routes)
-                {
-                    var r = route;
-                    <MudChip T="int" Size="Size.Small" Variant="@(_hidden.Contains(r.Id) ? Variant.Outlined : Variant.Filled)"
-                             Style="@($"background:{(_hidden.Contains(r.Id) ? "transparent" : r.Color)};color:{(_hidden.Contains(r.Id) ? r.Color : "#fff")};border-color:{r.Color}")"
-                             OnClick="@(() => ToggleRouteAsync(r))">@r.Code · @r.Name</MudChip>
-                }
-            </div>
-            <div id="@MapId" class="map-host"></div>
-        </MudPaper>
-    </MudItem>
+<header class="page-head">
+    <div>
+        <h1 class="page-title">Operations</h1>
+        <p class="page-sub">@InService of @Live.Buses.Count buses in service on @_routes.Count routes · live from SignalR</p>
+    </div>
+</header>
 
-    <MudItem xs="12" lg="3">
-        <MudPaper Elevation="1" Class="pa-3 mb-2">
-            <MudText Typo="Typo.subtitle1"><b>Selected bus</b></MudText>
-            @if (SelectedBus is { } bus)
+@* ---------- Summary ---------- *@
+<section class="kpis" aria-label="Network summary">
+    <div class="kpi">
+        <span class="kpi-label">In service</span>
+        <span class="kpi-value">@InService<small>/@Live.Buses.Count</small></span>
+        <span class="kpi-note">@Live.Buses.Count(b => b.Status == BusStatus.Layover) on layover</span>
+    </div>
+    <div class="kpi">
+        <span class="kpi-label">On time</span>
+        <span class="kpi-value">@OnTimePct<small>%</small></span>
+        <MudProgressLinear Value="@OnTimePct" Color="@(OnTimePct >= 85 ? Color.Success : OnTimePct >= 70 ? Color.Warning : Color.Error)" Rounded="true" Size="Size.Small" />
+    </div>
+    <div class="kpi @(LateCount > 0 ? "kpi-alert" : "")">
+        <span class="kpi-label">Running late</span>
+        <span class="kpi-value">@LateCount</span>
+        <span class="kpi-note">more than 5 min behind</span>
+    </div>
+    <div class="kpi @(BunchCount > 0 ? "kpi-warn" : "")">
+        <span class="kpi-label">Bunching</span>
+        <span class="kpi-value">@BunchCount</span>
+        <span class="kpi-note">headway under 3 min</span>
+    </div>
+    <div class="kpi kpi-wide">
+        <span class="kpi-label">City traffic index</span>
+        @if (Live.Traffic is { } t)
+        {
+            <span class="kpi-value">@t.Value.ToString("0.0")<small> @t.Label</small></span>
+            <Sparkline Values="Live.IndexHistory" Color="@IndexColor(t.Value)" />
+        }
+        else
+        {
+            <span class="kpi-value">–</span>
+        }
+    </div>
+    <div class="kpi kpi-wide">
+        <span class="kpi-label">Weather · Davao City</span>
+        @if (Live.Weather is { } w)
+        {
+            <span class="kpi-value kpi-weather"><WeatherIcon Code="w.WeatherCode" IsDay="w.IsDay" />@w.TemperatureC.ToString("0")<small>°C @w.Condition</small></span>
+            <span class="kpi-note @(w.RoadCapacityFactor < 1 ? "text-warn" : "")">@w.RoadImpact</span>
+        }
+        else
+        {
+            <span class="kpi-value">–</span><span class="kpi-note">Waiting for Open-Meteo</span>
+        }
+    </div>
+</section>
+
+<section class="ops-grid">
+    @* ---------- Map ---------- *@
+    <div class="map-card">
+        <div id="@MapId" class="map-host ops-map"></div>
+
+        <div class="map-overlay top-left">
+            @foreach (var route in _routes)
             {
-                <MudText Typo="Typo.h6">@bus.PlateNumber <MudText Inline="true" Typo="Typo.body2">(@bus.RouteCode, @bus.Direction)</MudText></MudText>
-                <MudText Typo="Typo.body2">Status: @bus.Status · @bus.SpeedKph km/h</MudText>
-                <MudText Typo="Typo.body2">Next stop: @bus.NextStop</MudText>
-                <MudChip T="string" Size="Size.Small" Color="@Format.DeviationColor(bus.DeviationMinutes)">@Format.Deviation(bus.DeviationMinutes)</MudChip>
+                var r = route;
+                var hidden = _hidden.Contains(r.Id);
+                <button class="route-chip @(hidden ? "off" : "")" style="--route:@r.Color" @onclick="() => ToggleRouteAsync(r)"
+                        aria-pressed="@(!hidden)" title="@r.Name">
+                    <span class="swatch"></span>@r.Code
+                    <span class="count">@Live.Buses.Count(b => b.RouteId == r.Id && b.Status != BusStatus.Layover)</span>
+                </button>
+            }
+        </div>
+
+        <div class="map-overlay top-right layer-toggles">
+            <MudSwitch T="bool" Value="_showCongestion" ValueChanged="@(v => SetLayerAsync("congestion", v))" Color="Color.Primary" Size="Size.Small" Label="Traffic" />
+            <MudSwitch T="bool" Value="_showStops" ValueChanged="@(v => SetLayerAsync("stops", v))" Color="Color.Primary" Size="Size.Small" Label="Stops" />
+            <MudSwitch T="bool" Value="_showChokes" ValueChanged="@(v => SetLayerAsync("chokes", v))" Color="Color.Primary" Size="Size.Small" Label="Choke points" />
+        </div>
+
+        <div class="map-overlay bottom-left legend">
+            <span class="legend-title">Traffic (v/c)</span>
+            <span><i style="background:#16A34A"></i>Free flow</span>
+            <span><i style="background:#EAB308"></i>Busy</span>
+            <span><i style="background:#EA580C"></i>Heavy</span>
+            <span><i style="background:#DC2626"></i>Over capacity</span>
+        </div>
+    </div>
+
+    @* ---------- Side rail ---------- *@
+    <aside class="rail">
+        @if (SelectedBus is { } bus)
+        {
+            var route = _routes.FirstOrDefault(r => r.Id == bus.RouteId);
+            <div class="card bus-card">
+                <div class="bus-card-head">
+                    <span class="route-dot" style="--route:@(route?.Color ?? "#2563EB")"></span>
+                    <div>
+                        <div class="bus-plate">@bus.PlateNumber</div>
+                        <div class="bus-route">@route?.Name · @bus.Direction</div>
+                    </div>
+                    <MudIconButton Icon="@Icons.Material.Filled.Close" Size="Size.Small" OnClick="ClearSelectionAsync" aria-label="Close bus details" />
+                </div>
+                <div class="bus-facts">
+                    <div><span>Status</span><b>@StatusText(bus.Status)</b></div>
+                    <div><span>Speed</span><b>@bus.SpeedKph.ToString("0") km/h</b></div>
+                    <div><span>Next stop</span><b>@bus.NextStop</b></div>
+                    <div><span>Headway</span><b class="@(LiveStore.IsBunching(bus) ? "text-warn" : "")">@(bus.HeadwayMinutes is { } h ? $"{h:0.0} min" : "Lead bus")</b></div>
+                </div>
+                <div class="d-flex align-center gap-2 flex-wrap">
+                    <MudChip T="string" Size="Size.Small" Color="@Format.DeviationColor(bus.DeviationMinutes)" Variant="Variant.Filled">@Format.Deviation(bus.DeviationMinutes)</MudChip>
+                    @if (LiveStore.IsBunching(bus))
+                    {
+                        <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Outlined" Icon="@Icons.Material.Filled.Warning">Bunching</MudChip>
+                    }
+                </div>
                 <AuthorizeView Roles="@Roles.AdminOrDispatcher">
-                    <div class="d-flex gap-2 mt-2">
-                        <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Warning" OnClick="@(() => HoldAsync(bus.BusId))"
-                                   Disabled="@(bus.Status == BusStatus.Held)">Hold 3 min</MudButton>
-                        <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary" OnClick="@(() => ReleaseAsync(bus.BusId))"
-                                   Disabled="@(bus.Status != BusStatus.Held)">Release</MudButton>
+                    <div class="bus-actions">
+                        @if (bus.Status == BusStatus.Held)
+                        {
+                            <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.PlayArrow" OnClick="@(() => ReleaseAsync(bus))" FullWidth="true">Release bus</MudButton>
+                        }
+                        else
+                        {
+                            <span class="actions-label">Hold at stop</span>
+                            <MudButtonGroup Variant="Variant.Outlined" Color="Color.Warning" Size="Size.Small">
+                                <MudButton OnClick="@(() => HoldAsync(bus, 1))">1 min</MudButton>
+                                <MudButton OnClick="@(() => HoldAsync(bus, 3))">3 min</MudButton>
+                                <MudButton OnClick="@(() => HoldAsync(bus, 5))">5 min</MudButton>
+                            </MudButtonGroup>
+                        }
+                        <MudButton Variant="Variant.Text" Size="Size.Small" StartIcon="@Icons.Material.Filled.CenterFocusStrong" OnClick="@(() => FocusAsync(bus.BusId))">Center on map</MudButton>
                     </div>
                 </AuthorizeView>
-            }
-            else
-            {
-                <MudText Typo="Typo.body2" Color="Color.Secondary">Click a bus on the map.</MudText>
-            }
-        </MudPaper>
+            </div>
+        }
 
-        <MudPaper Elevation="1" Class="pa-3">
-            <MudText Typo="Typo.subtitle1" Class="mb-1"><b>Choke points (live)</b></MudText>
-            @foreach (var s in _status.OrderByDescending(s => Math.Max(s.InboundVc, s.OutboundVc)))
-            {
-                var vc = Math.Max(s.InboundVc, s.OutboundVc);
-                <div class="d-flex align-center justify-space-between py-1">
-                    <div>
-                        <MudText Typo="Typo.body2"><b>@s.Name</b> @(s.IncidentActive ? "⚠" : "")</MudText>
-                        <MudText Typo="Typo.caption">In @s.InboundVolume · Out @s.OutboundVolume veh/h · @Format.Lane(s.ActiveLaneState)</MudText>
+        <div class="card rail-tabs">
+            <MudTabs Elevation="0" Rounded="true" ApplyEffectsToContainer="true" HideSlider="true" TabPanelsClass="pt-3" @bind-ActivePanelIndex="_tab">
+                <MudTabPanel Text="Fleet" BadgeData="@(LateCount + BunchCount > 0 ? LateCount + BunchCount : null)" BadgeColor="Color.Error">
+                    <MudTextField T="string" @bind-Value="_search" Placeholder="Search plate, route or stop" Variant="Variant.Outlined" Margin="Margin.Dense"
+                                  Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search" Immediate="true" Clearable="true" id="fleet-search" />
+                    <div class="filter-row" role="group" aria-label="Filter buses">
+                        @foreach (var f in Filters)
+                        {
+                            var filter = f;
+                            <button class="filter-chip @(_filter == filter ? "on" : "")" @onclick="() => _filter = filter" aria-pressed="@(_filter == filter)">
+                                @filter <span>@CountFor(filter)</span>
+                            </button>
+                        }
                     </div>
-                    <MudChip T="string" Size="Size.Small" Color="@Format.CongestionColor(vc)">v/c @vc.ToString("0.00")</MudChip>
-                </div>
-            }
-        </MudPaper>
-    </MudItem>
-</MudGrid>
+                    <div class="fleet-list">
+                        @foreach (var b in FilteredBuses)
+                        {
+                            var item = b;
+                            var color = _routes.FirstOrDefault(r => r.Id == item.RouteId)?.Color ?? "#2563EB";
+                            <button class="fleet-item @(item.BusId == _selectedBusId ? "active" : "")" @onclick="() => SelectAsync(item.BusId, true)">
+                                <span class="route-dot" style="--route:@color"></span>
+                                <span class="fleet-main">
+                                    <b>@item.PlateNumber</b>
+                                    <small>@StatusText(item.Status) · @item.NextStop</small>
+                                </span>
+                                <span class="fleet-side">
+                                    <span class="dev @DevClass(item.DeviationMinutes)">@ShortDev(item.DeviationMinutes)</span>
+                                    @if (LiveStore.IsBunching(item))
+                                    {
+                                        <small class="text-warn">bunching</small>
+                                    }
+                                </span>
+                            </button>
+                        }
+                        @if (!FilteredBuses.Any())
+                        {
+                            <p class="empty">@(Live.Buses.Count == 0 ? "Waiting for the first telemetry update…" : "No buses match this filter.")</p>
+                        }
+                    </div>
+                </MudTabPanel>
+
+                <MudTabPanel Text="Traffic">
+                    <div class="choke-list">
+                        @foreach (var s in Live.ChokePoints.OrderByDescending(s => Math.Max(s.InboundVc, s.OutboundVc)))
+                        {
+                            var vc = Math.Max(s.InboundVc, s.OutboundVc);
+                            <div class="choke-row">
+                                <div class="choke-head">
+                                    <b>@s.Name</b>
+                                    @if (s.IncidentActive)
+                                    {
+                                        <MudChip T="string" Size="Size.Small" Color="Color.Error" Variant="Variant.Text" Icon="@Icons.Material.Filled.Warning">Incident</MudChip>
+                                    }
+                                    <span class="vc" style="--c:@CongestionHex(vc)">@vc.ToString("0.00")</span>
+                                </div>
+                                <div class="dir-bars">
+                                    <span>In</span><div class="bar"><i style="width:@Pct(s.InboundVc)%;background:@CongestionHex(s.InboundVc)"></i></div><small>@s.InboundVolume veh/h · +@s.InboundDelayMinutes min</small>
+                                    <span>Out</span><div class="bar"><i style="width:@Pct(s.OutboundVc)%;background:@CongestionHex(s.OutboundVc)"></i></div><small>@s.OutboundVolume veh/h · +@s.OutboundDelayMinutes min</small>
+                                </div>
+                                <small class="choke-lane">@Format.Lane(s.ActiveLaneState)@(s.CapacityFactor < 1 ? $" · capacity {s.CapacityFactor:P0}" : "")</small>
+                            </div>
+                        }
+                    </div>
+                </MudTabPanel>
+
+                <MudTabPanel Text="Weather">
+                    @if (Live.Weather is { } w)
+                    {
+                        <div class="weather-now">
+                            <WeatherIcon Code="w.WeatherCode" IsDay="w.IsDay" Size="Size.Large" />
+                            <div>
+                                <div class="weather-temp">@w.TemperatureC.ToString("0")°C</div>
+                                <div>@w.Condition · feels like @w.FeelsLikeC.ToString("0")°C</div>
+                            </div>
+                        </div>
+                        <div class="bus-facts">
+                            <div><span>Humidity</span><b>@w.HumidityPercent%</b></div>
+                            <div><span>Wind</span><b>@w.WindKph.ToString("0") km/h</b></div>
+                            <div><span>Rain now</span><b>@w.PrecipitationMm.ToString("0.0") mm</b></div>
+                            <div><span>Road capacity</span><b class="@(w.RoadCapacityFactor < 1 ? "text-warn" : "")">@w.RoadCapacityFactor.ToString("P0")</b></div>
+                        </div>
+                        <p class="weather-impact"><MudIcon Icon="@Icons.Material.Filled.Info" Size="Size.Small" /> @w.RoadImpact. Rain lowers capacity at every choke point and is included in the lane plan.</p>
+                        <div class="rain-outlook" aria-label="Chance of rain, next 12 hours">
+                            <span class="actions-label">Chance of rain · next 12 h</span>
+                            <div class="rain-bars">
+                                @foreach (var h in w.NextHours.Take(12))
+                                {
+                                    <div class="rain-col" title="@($"{Format.Time(h.HourStartUtc)} · {h.Condition} · {h.PrecipitationProbability}% · {h.PrecipitationMm:0.0} mm · {h.TemperatureC:0}°C")">
+                                        <span class="rain-pct">@h.PrecipitationProbability</span>
+                                        <div class="rain-track"><i style="height:@Math.Max(4, h.PrecipitationProbability)%"></i></div>
+                                        <span class="rain-hour">@Format.Ph(h.HourStartUtc).ToString("HH")</span>
+                                    </div>
+                                }
+                            </div>
+                        </div>
+                        <small class="muted">Live data from Open-Meteo · updated @Format.Time(w.ObservedAtUtc)</small>
+                    }
+                    else
+                    {
+                        <p class="empty">Weather hasn't loaded yet. It refreshes every 10 minutes.</p>
+                    }
+                </MudTabPanel>
+
+                <MudTabPanel Text="Activity">
+                    <div class="activity">
+                        @foreach (var a in Live.Activity)
+                        {
+                            <div class="activity-item">
+                                <span class="activity-icon @a.Kind.ToString().ToLowerInvariant()"><MudIcon Icon="@ActivityIcon(a.Kind)" Size="Size.Small" /></span>
+                                <div>
+                                    <b>@a.Title</b>
+                                    @if (!string.IsNullOrEmpty(a.Detail))
+                                    {
+                                        <small>@a.Detail</small>
+                                    }
+                                </div>
+                                <time>@Format.Time(a.TimestampUtc)</time>
+                            </div>
+                        }
+                        @if (!Live.Activity.Any())
+                        {
+                            <p class="empty">Alerts, lane changes, incidents and weather changes appear here as they happen.</p>
+                        }
+                    </div>
+                </MudTabPanel>
+            </MudTabs>
+        </div>
+    </aside>
+</section>
 
 @code {
-    private const string MapId = "live-map";
+    private const string MapId = "ops-map";
+    private static readonly string[] Filters = ["All", "Late", "Early", "Bunching", "Held"];
 
     private List<RouteDto> _routes = [];
-    private List<ChokePointStatusDto> _status = [];
     private readonly HashSet<int> _hidden = [];
-    private readonly Dictionary<int, BusPositionDto> _buses = [];
     private int? _selectedBusId;
+    private int _tab;
+    private string? _search;
+    private string _filter = "All";
+    private bool _showCongestion = true, _showStops = true, _showChokes = true;
     private DotNetObjectReference<Home>? _selfRef;
     private bool _mapReady;
     private Task _loading = Task.CompletedTask;
 
-    private BusPositionDto? SelectedBus => _selectedBusId is { } id && _buses.TryGetValue(id, out var b) ? b : null;
+    private BusPositionDto? SelectedBus => _selectedBusId is { } id ? Live.Bus(id) : null;
+    private int InService => Live.Buses.Count(b => b.Status != BusStatus.Layover);
+    private int LateCount => Live.Buses.Count(LiveStore.IsLate);
+    private int BunchCount => Live.Buses.Count(LiveStore.IsBunching);
+    private int OnTimePct => Live.Buses.Count == 0 ? 0 :
+        (int)Math.Round(100.0 * Live.Buses.Count(b => !LiveStore.IsLate(b) && !LiveStore.IsEarly(b)) / Live.Buses.Count);
+
+    private IEnumerable<BusPositionDto> FilteredBuses => Live.Buses
+        .Where(b => Matches(b, _filter))
+        .Where(b => string.IsNullOrWhiteSpace(_search)
+                 || b.PlateNumber.Contains(_search, StringComparison.OrdinalIgnoreCase)
+                 || b.RouteCode.Contains(_search, StringComparison.OrdinalIgnoreCase)
+                 || b.NextStop.Contains(_search, StringComparison.OrdinalIgnoreCase))
+        .OrderByDescending(b => LiveStore.IsLate(b) || LiveStore.IsBunching(b))
+        .ThenByDescending(b => Math.Abs(b.DeviationMinutes));
+
+    private static bool Matches(BusPositionDto b, string filter) => filter switch
+    {
+        "Late" => LiveStore.IsLate(b),
+        "Early" => LiveStore.IsEarly(b),
+        "Bunching" => LiveStore.IsBunching(b),
+        "Held" => b.Status == BusStatus.Held,
+        _ => true
+    };
+
+    private int CountFor(string filter) => Live.Buses.Count(b => Matches(b, filter));
 
     protected override Task OnInitializedAsync()
     {
         Telemetry.BusPositions += OnBusPositions;
         Telemetry.ChokePointStatus += OnChokeStatus;
+        Live.Changed += OnLiveChanged;
+        ThemeState.Changed += OnThemeChanged;
         _loading = LoadAsync();
         return _loading;
     }
@@ -93,8 +333,6 @@
         try
         {
             _routes = await Api.GetRoutesAsync();
-            _status = await Api.GetChokePointStatusAsync();
-            await Telemetry.EnsureStartedAsync();
         }
         catch (Exception ex)
         {
@@ -105,37 +343,54 @@
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         if (!firstRender) return;
-        // The first render can happen before the route data has arrived.
-        await _loading;
+        await _loading;   // the first render can happen before the routes arrive
         _selfRef = DotNetObjectReference.Create(this);
-        await JS.InvokeVoidAsync("durianMap.init", MapId, _selfRef);
+        await JS.InvokeVoidAsync("durianMap.init", MapId, _selfRef, new { dark = ThemeState.IsDark });
         await JS.InvokeVoidAsync("durianMap.setRoutes", MapId, _routes);
-        var chokePoints = await Api.GetChokePointsAsync();
-        await JS.InvokeVoidAsync("durianMap.setChokePoints", MapId, chokePoints);
-        await JS.InvokeVoidAsync("durianMap.updateChokeStatus", MapId, _status);
+        await JS.InvokeVoidAsync("durianMap.setChokePoints", MapId, await Api.GetChokePointsAsync());
+        await JS.InvokeVoidAsync("durianMap.updateChokeStatus", MapId, Live.ChokePoints);
+        if (Live.Buses.Count > 0) await JS.InvokeVoidAsync("durianMap.updateBuses", MapId, Live.Buses);
         _mapReady = true;
     }
 
     [JSInvokable]
-    public Task OnBusSelected(int busId)
+    public Task OnBusSelected(int busId) => InvokeAsync(() => SelectAsync(busId, false));
+
+    private async Task SelectAsync(int busId, bool fly)
     {
         _selectedBusId = busId;
+        _tab = 0;
+        if (_mapReady)
+        {
+            await JS.InvokeVoidAsync("durianMap.selectBus", MapId, busId);
+            if (fly) await JS.InvokeVoidAsync("durianMap.flyToBus", MapId, busId);
+        }
         StateHasChanged();
-        return Task.CompletedTask;
     }
+
+    private async Task ClearSelectionAsync()
+    {
+        _selectedBusId = null;
+        if (_mapReady) await JS.InvokeVoidAsync("durianMap.selectBus", MapId, -1);
+    }
+
+    private Task FocusAsync(int busId) => JS.InvokeVoidAsync("durianMap.flyToBus", MapId, busId).AsTask();
 
     private void OnBusPositions(List<BusPositionDto> positions) => InvokeAsync(async () =>
     {
-        foreach (var p in positions) _buses[p.BusId] = p;
         if (_mapReady) await JS.InvokeVoidAsync("durianMap.updateBuses", MapId, positions);
-        if (_selectedBusId is { } id && positions.Any(p => p.BusId == id)) StateHasChanged();
     });
 
     private void OnChokeStatus(List<ChokePointStatusDto> status) => InvokeAsync(async () =>
     {
-        _status = status;
         if (_mapReady) await JS.InvokeVoidAsync("durianMap.updateChokeStatus", MapId, status);
-        StateHasChanged();
+    });
+
+    private void OnLiveChanged() => InvokeAsync(StateHasChanged);
+
+    private void OnThemeChanged() => InvokeAsync(async () =>
+    {
+        if (_mapReady) await JS.InvokeVoidAsync("durianMap.setTheme", MapId, ThemeState.IsDark);
     });
 
     private async Task ToggleRouteAsync(RouteDto route)
@@ -149,17 +404,59 @@
         await JS.InvokeVoidAsync("durianMap.setRouteVisible", MapId, route.Id, show);
     }
 
-    private async Task HoldAsync(int busId) => Report(await Telemetry.HoldBusAsync(busId, 3));
+    private async Task SetLayerAsync(string layer, bool visible)
+    {
+        switch (layer)
+        {
+            case "congestion": _showCongestion = visible; break;
+            case "stops": _showStops = visible; break;
+            case "chokes": _showChokes = visible; break;
+        }
+        await JS.InvokeVoidAsync("durianMap.setLayerVisible", MapId, layer, visible);
+    }
 
-    private async Task ReleaseAsync(int busId) => Report(await Telemetry.ReleaseBusAsync(busId));
+    private async Task HoldAsync(BusPositionDto bus, int minutes)
+    {
+        var result = await Telemetry.HoldBusAsync(bus.BusId, minutes);
+        Report(result);
+        if (result.Success) Live.Log(ActivityKind.Command, $"{bus.PlateNumber} held for {minutes} min", $"{bus.RouteCode} · at {bus.NextStop}");
+    }
+
+    private async Task ReleaseAsync(BusPositionDto bus)
+    {
+        var result = await Telemetry.ReleaseBusAsync(bus.BusId);
+        Report(result);
+        if (result.Success) Live.Log(ActivityKind.Command, $"{bus.PlateNumber} released", bus.RouteCode);
+    }
 
     private void Report(CommandResultDto result) =>
         Snackbar.Add(result.Message, result.Success ? Severity.Success : Severity.Error);
+
+    private static string StatusText(BusStatus s) => Format.Status(s);
+
+    private static string ShortDev(double m) => Math.Abs(m) < 0.5 ? "on time" : m > 0 ? $"+{m:0.0}" : $"{m:0.0}";
+    private static string DevClass(double m) => m > 5 ? "late" : m > 2 ? "slow" : m < -4 ? "early" : "ok";
+    private static string IndexColor(double v) => v < 3 ? "#16A34A" : v < 5 ? "#EAB308" : v < 7 ? "#EA580C" : "#DC2626";
+    private static string CongestionHex(double vc) => vc >= 1 ? "#DC2626" : vc >= 0.85 ? "#EA580C" : vc >= 0.65 ? "#EAB308" : "#16A34A";
+    private static int Pct(double vc) => (int)Math.Clamp(vc / 1.2 * 100, 3, 100);
+
+    private static string ActivityIcon(ActivityKind kind) => kind switch
+    {
+        ActivityKind.Late => Icons.Material.Filled.Schedule,
+        ActivityKind.Early => Icons.Material.Filled.FastForward,
+        ActivityKind.Lane => Icons.Material.Filled.AltRoute,
+        ActivityKind.Weather => Icons.Material.Filled.Cloud,
+        ActivityKind.Incident => Icons.Material.Filled.Warning,
+        ActivityKind.Plan => Icons.Material.Filled.EventNote,
+        _ => Icons.Material.Filled.TouchApp
+    };
 
     public async ValueTask DisposeAsync()
     {
         Telemetry.BusPositions -= OnBusPositions;
         Telemetry.ChokePointStatus -= OnChokeStatus;
+        Live.Changed -= OnLiveChanged;
+        ThemeState.Changed -= OnThemeChanged;
         try
         {
             await JS.InvokeVoidAsync("durianMap.dispose", MapId);

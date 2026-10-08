@@ -51,6 +51,7 @@ public static class HubEvents
     public const string LaneConfigChanged = "LaneConfigChanged";
     public const string RecommendationsUpdated = "RecommendationsUpdated";
     public const string CommandResult = "CommandResult";
+    public const string Weather = "Weather";
 }
 
 public static class HubPaths
@@ -59,6 +60,24 @@ public static class HubPaths
 }
 
 public record LatLng(double Lat, double Lng);
+
+/// <summary>Current Davao weather and its effect on road capacity.</summary>
+public record WeatherDto(
+    bool IsLive,
+    DateTime ObservedAtUtc,
+    double TemperatureC,
+    double FeelsLikeC,
+    int HumidityPercent,
+    double PrecipitationMm,
+    double WindKph,
+    int WeatherCode,
+    string Condition,
+    bool IsDay,
+    double RoadCapacityFactor,
+    string RoadImpact,
+    List<WeatherHourDto> NextHours);
+
+public record WeatherHourDto(DateTime HourStartUtc, double TemperatureC, int PrecipitationProbability, double PrecipitationMm, int WeatherCode, string Condition);
 
 public record StopDto(int Id, string Name, double Lat, double Lng, int Sequence);
 
@@ -77,7 +96,8 @@ public record BusPositionDto(
     string NextStop,
     double DeviationMinutes,
     BusStatus Status,
-    DateTime TimestampUtc);
+    DateTime TimestampUtc,
+    double? HeadwayMinutes = null);
 
 public record DeviationAlertDto(
     long Id,
@@ -109,7 +129,8 @@ public record ChokePointStatusDto(
     double OutboundDelayMinutes,
     bool IncidentActive,
     LaneState ActiveLaneState,
-    DateTime TimestampUtc);
+    DateTime TimestampUtc,
+    double CapacityFactor = 1.0);
 
 public record ForecastDto(
     int ChokePointId,

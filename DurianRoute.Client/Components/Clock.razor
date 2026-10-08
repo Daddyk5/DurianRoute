@@ -1,0 +1,16 @@
+@implements IDisposable
+
+<span class="clock" title="Philippine time (UTC+8)">
+    <span class="clock-time">@_now.ToString("HH:mm:ss")</span>
+    <span class="clock-date">@_now.ToString("ddd, MMM d")</span>
+</span>
+
+@code {
+    private DateTime _now = Format.Ph(DateTime.UtcNow);
+    private Timer? _timer;
+
+    protected override void OnInitialized() =>
+        _timer = new Timer(_ => InvokeAsync(() => { _now = Format.Ph(DateTime.UtcNow); StateHasChanged(); }), null, 1000, 1000);
+
+    public void Dispose() => _timer?.Dispose();
+}

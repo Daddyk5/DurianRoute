@@ -2,84 +2,115 @@
 @implements IDisposable
 @inject SessionStore Session
 @inject TelemetryClient Telemetry
+@inject LiveStore Live
+@inject ApiClient Api
+@inject ThemeService ThemeState
 @inject NavigationManager Nav
 @inject ISnackbar Snackbar
 
-<MudThemeProvider Theme="_theme" />
-<MudPopoverProvider />
-<MudDialogProvider />
-<MudSnackbarProvider />
-
 <MudLayout>
-    <MudAppBar Elevation="1" Color="Color.Primary">
-        <AuthorizeView>
-            <Authorized>
-                <MudIconButton Icon="@Icons.Material.Filled.Menu" Color="Color.Inherit" Edge="Edge.Start" OnClick="@(() => _drawerOpen = !_drawerOpen)" />
-            </Authorized>
-        </AuthorizeView>
-        <MudText Typo="Typo.h6" Class="ml-2">DurianRoute · CTTMO Dispatch</MudText>
+    <MudAppBar Elevation="0" Dense="false" Class="app-bar">
+        <MudIconButton Icon="@Icons.Material.Filled.Menu" Color="Color.Inherit" Edge="Edge.Start"
+                       OnClick="@(() => _drawerOpen = !_drawerOpen)" aria-label="Toggle navigation" />
+        <a href="" class="brand-link"><Logo Size="34" ShowWordmark="true" /></a>
+        <span class="app-bar-tag">CTTMO Dispatch</span>
         <MudSpacer />
-        <AuthorizeView>
+
+        <div class="app-bar-status">
+            @if (Live.Weather is { } w)
+            {
+                <span class="status-pill" title="@($"{w.Condition} · {w.RoadImpact}")">
+                    <WeatherIcon Code="w.WeatherCode" IsDay="w.IsDay" Size="Size.Small" />
+                    <b>@w.TemperatureC.ToString("0")°C</b>
+                    <span class="hide-sm">@w.Condition</span>
+                </span>
+            }
+            @if (Live.Traffic is { } t)
+            {
+                <span class="status-pill hide-sm" title="City traffic index (0–10)">
+                    <MudIcon Icon="@Icons.Material.Filled.Traffic" Size="Size.Small" Color="@IndexColor(t.Value)" />
+                    <b>@t.Value.ToString("0.0")</b> @t.Label
+                </span>
+            }
+            <Clock />
+            <span class="live-pill @ConnectionClass" title="Live telemetry connection">
+                <span class="live-dot"></span>@ConnectionText
+            </span>
+        </div>
+
+        <MudTooltip Text="@(ThemeState.IsDark ? "Switch to light mode" : "Switch to dark mode")">
+            <MudIconButton Icon="@(ThemeState.IsDark ? Icons.Material.Filled.LightMode : Icons.Material.Filled.DarkMode)"
+                           Color="Color.Inherit" OnClick="ThemeState.ToggleAsync" aria-label="Toggle dark mode" />
+        </MudTooltip>
+
+        <AuthorizeView Context="auth">
             <Authorized>
-                <MudChip T="string" Size="Size.Small" Color="@ConnectionColor" Variant="Variant.Filled" Icon="@Icons.Material.Filled.Sensors">
-                    @Telemetry.State
-                </MudChip>
-                <MudText Typo="Typo.body2" Class="mx-3">@context.User.Identity?.Name</MudText>
-                <MudIconButton Icon="@Icons.Material.Filled.Logout" Color="Color.Inherit" OnClick="LogoutAsync" title="Sign out" />
+                <MudMenu AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight">
+                    <ActivatorContent>
+                        <div class="user-chip">
+                            <MudAvatar Size="Size.Small" Color="Color.Primary">@Initial(auth.User.Identity?.Name)</MudAvatar>
+                            <div class="user-meta hide-sm">
+                                <span>@auth.User.Identity?.Name</span>
+                                <small>@(auth.User.IsInRole(Roles.Admin) ? "Administrator" : "Dispatcher")</small>
+                            </div>
+                        </div>
+                    </ActivatorContent>
+                    <ChildContent>
+                        <MudMenuItem Icon="@Icons.Material.Filled.Logout" OnClick="LogoutAsync">Sign out</MudMenuItem>
+                    </ChildContent>
+                </MudMenu>
             </Authorized>
         </AuthorizeView>
     </MudAppBar>
 
-    <AuthorizeView>
-        <Authorized>
-            <MudDrawer @bind-Open="_drawerOpen" Elevation="1" ClipMode="DrawerClipMode.Always">
-                <MudNavMenu>
-                    <MudNavLink Href="" Match="NavLinkMatch.All" Icon="@Icons.Material.Filled.Map">Live Map</MudNavLink>
-                    <MudNavLink Href="deviations" Icon="@Icons.Material.Filled.Schedule">Schedule Deviations</MudNavLink>
-                    <MudNavLink Href="lanes" Icon="@Icons.Material.Filled.AltRoute">Lane Management</MudNavLink>
-                    <MudNavLink Href="forecasts" Icon="@Icons.Material.Filled.Insights">Predictive Heatmap</MudNavLink>
-                </MudNavMenu>
-            </MudDrawer>
-        </Authorized>
-    </AuthorizeView>
+    <MudDrawer @bind-Open="_drawerOpen" Elevation="0" ClipMode="DrawerClipMode.Always" Variant="@DrawerVariant.Mini" OpenMiniOnHover="false" Class="side-nav">
+        <MudNavMenu Rounded="true" Margin="Margin.Dense" Color="Color.Primary" Class="pa-2">
+            <MudNavLink Href="" Match="NavLinkMatch.All" Icon="@Icons.Material.Filled.Dashboard">Operations</MudNavLink>
+            <MudNavLink Href="deviations" Icon="@Icons.Material.Filled.Schedule">Schedule &amp; headways</MudNavLink>
+            <MudNavLink Href="lanes" Icon="@Icons.Material.Filled.AltRoute">Lane management</MudNavLink>
+            <MudNavLink Href="forecasts" Icon="@Icons.Material.Filled.Insights">Forecasts</MudNavLink>
+        </MudNavMenu>
+    </MudDrawer>
 
-    <MudMainContent>
-        <MudContainer MaxWidth="MaxWidth.ExtraExtraLarge" Class="pa-4">
+    <MudMainContent Class="main-content">
+        <div class="page">
             @Body
-        </MudContainer>
+        </div>
     </MudMainContent>
 </MudLayout>
 
 @code {
     private bool _drawerOpen = true;
 
-    private readonly MudTheme _theme = new()
-    {
-        PaletteLight = new PaletteLight
-        {
-            Primary = "#2e7d32",
-            Secondary = "#f9a825",
-            AppbarBackground = "#2e7d32"
-        }
-    };
-
-    private Color ConnectionColor => Telemetry.State switch
-    {
-        HubConnectionState.Connected => Color.Success,
-        HubConnectionState.Reconnecting or HubConnectionState.Connecting => Color.Warning,
-        _ => Color.Error
-    };
-
     [CascadingParameter] private Task<AuthenticationState>? AuthState { get; set; }
+
+    private string ConnectionClass => Telemetry.State switch
+    {
+        HubConnectionState.Connected => "ok",
+        HubConnectionState.Reconnecting or HubConnectionState.Connecting => "warn",
+        _ => "down"
+    };
+
+    private string ConnectionText => Telemetry.State switch
+    {
+        HubConnectionState.Connected => "Live",
+        HubConnectionState.Reconnecting or HubConnectionState.Connecting => "Reconnecting",
+        _ => "Offline"
+    };
+
+    private static Color IndexColor(double v) => v switch { < 3 => Color.Success, < 5 => Color.Warning, < 7 => Color.Warning, _ => Color.Error };
+
+    private static string Initial(string? name) => string.IsNullOrEmpty(name) ? "?" : name[..1].ToUpperInvariant();
 
     protected override void OnInitialized()
     {
         Telemetry.StateChanged += OnConnectionChanged;
         Telemetry.DeviationAlert += OnDeviationAlert;
         Telemetry.LaneConfigChanged += OnLaneChanged;
+        Live.Changed += OnLiveChanged;
     }
 
-    // Every page shows the live connection status and alerts, so connect as soon as someone is signed in.
+    // Every page shows live status and alerts, so connect as soon as someone is signed in.
     protected override async Task OnParametersSetAsync()
     {
         if (AuthState is null || Telemetry.State != HubConnectionState.Disconnected) return;
@@ -88,6 +119,9 @@
         try
         {
             await Telemetry.EnsureStartedAsync();
+            var status = await Api.GetChokePointStatusAsync();
+            var weather = await Api.GetWeatherAsync();
+            Live.Seed(status, weather);
         }
         catch (Exception ex)
         {
@@ -96,6 +130,8 @@
     }
 
     private void OnConnectionChanged(HubConnectionState _) => InvokeAsync(StateHasChanged);
+
+    private void OnLiveChanged() => InvokeAsync(StateHasChanged);
 
     private void OnDeviationAlert(DeviationAlertDto alert) =>
         InvokeAsync(() => Snackbar.Add($"[{alert.RouteCode}] {alert.Message}",
@@ -107,6 +143,7 @@
     private async Task LogoutAsync()
     {
         await Telemetry.StopAsync();
+        Live.Clear();
         await Session.SignOutAsync();
         Nav.NavigateTo("login");
     }
@@ -116,5 +153,6 @@
         Telemetry.StateChanged -= OnConnectionChanged;
         Telemetry.DeviationAlert -= OnDeviationAlert;
         Telemetry.LaneConfigChanged -= OnLaneChanged;
+        Live.Changed -= OnLiveChanged;
     }
 }

@@ -1,0 +1,28 @@
+@* Small trend line with an area fill and an emphasized latest point. *@
+@if (Values.Count >= 2)
+{
+    <svg class="sparkline" viewBox="0 0 @Width @Height" width="100%" height="@Height" preserveAspectRatio="none" aria-hidden="true">
+        <path d="@Area" fill="@Color" fill-opacity="0.14" />
+        <path d="@Line" fill="none" stroke="@Color" stroke-width="2" vector-effect="non-scaling-stroke" stroke-linejoin="round" />
+        <circle cx="@X(Values.Count - 1)" cy="@Y(Values[^1])" r="2.6" fill="@Color" />
+    </svg>
+}
+else
+{
+    <div style="height:@(Height)px"></div>
+}
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<double> Values { get; set; } = [];
+    [Parameter] public double Max { get; set; } = 10;
+    [Parameter] public string Color { get; set; } = "var(--mud-palette-primary)";
+    [Parameter] public int Height { get; set; } = 28;
+
+    private const int Width = 120;
+
+    private string X(int i) => (i * (double)Width / Math.Max(1, Values.Count - 1)).ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
+    private string Y(double v) => (Height - 2 - Math.Clamp(v / Max, 0, 1) * (Height - 4)).ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
+
+    private string Line => "M" + string.Join(" L", Values.Select((v, i) => $"{X(i)},{Y(v)}"));
+    private string Area => Line + $" L{X(Values.Count - 1)},{Height} L0,{Height} Z";
+}

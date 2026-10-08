@@ -7,13 +7,15 @@
 
 <PageTitle>Lane Management · DurianRoute</PageTitle>
 
-<div class="d-flex align-center mb-3">
-    <MudText Typo="Typo.h5">Lane management</MudText>
-    <MudSpacer />
+<header class="page-head">
+    <div>
+        <h1 class="page-title">Lane management</h1>
+        <p class="page-sub">Recommended reversible and bus-priority lanes for the next 24 hours, with rain from the live forecast included</p>
+    </div>
     <AuthorizeView Roles="@Roles.AdminOrDispatcher">
         <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Refresh" OnClick="ReplanAsync" Disabled="_busy">Re-plan now</MudButton>
     </AuthorizeView>
-</div>
+</header>
 
 <MudGrid Spacing="2">
     <MudItem xs="12">

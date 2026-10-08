@@ -14,7 +14,7 @@ Davao City's main corridors (Matina Crossing, Bankerohan, J.P. Laurel–Lanang, 
 
 A dispatch system for the City Transport and Traffic Management Office (CTTMO) that answers three questions:
 
-1. **Where are the buses right now?** Live positions stream to a map every second, and late or early buses raise alerts automatically.
+1. **Where are the buses right now?** Live positions stream to a map every second along real Davao roads. Late, early and bunched buses are flagged automatically, and live weather shows how rain is affecting the roads.
 2. **Where will traffic jam tomorrow?** A machine-learning model forecasts congestion at each choke point 24 hours in advance.
 3. **What should we do about it?** An optimization algorithm recommends when to open a reversible lane or a bus-priority lane. A dispatcher approves or rejects each recommendation, and every change is logged.
 
@@ -30,7 +30,7 @@ Lane scheduling is modeled as a shortest-path problem over hours × lane layouts
 SignalR pushes bus positions, congestion levels and lane changes to every dashboard without page reloads. Dispatchers send commands back the same way, for example holding a bus to fix bunching. Each dashboard can choose which routes it receives.
 
 **Tests that caught a real modeling gap.**
-The 49-test suite showed that the first version of the cost model would leave a reversible lane deployed all night, because nothing in the model said that staffing it costs anything. Adding an hourly operating cost fixed it, and there's now a test for that behavior.
+The test suite (now 62 tests) showed that the first version of the cost model would leave a reversible lane deployed all night, because nothing in the model said that staffing it costs anything. Adding an hourly operating cost fixed it, and there's now a test for that behavior.
 
 **Secure by default.**
 - JWT login with Admin and Dispatcher roles, enforced on the API and on the real-time hub.
@@ -46,7 +46,7 @@ The 49-test suite showed that the first version of the cost model would leave a 
 
 ## Tech
 
-C# / .NET 10 · ASP.NET Core Web API · SignalR · ML.NET · Entity Framework Core · SQL Server / SQLite · Blazor WebAssembly · MudBlazor · Leaflet · Plotly · xUnit
+C# / .NET 10 · ASP.NET Core Web API · SignalR · ML.NET · Entity Framework Core · SQL Server / SQLite · Blazor WebAssembly · MudBlazor · Leaflet · Plotly · xUnit · OSRM · Open-Meteo
 
 ## Honest scope
 

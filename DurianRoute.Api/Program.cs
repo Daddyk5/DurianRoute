@@ -6,6 +6,7 @@ using DurianRoute.Api.Hubs;
 using DurianRoute.Api.Scheduling;
 using DurianRoute.Api.Simulation;
 using DurianRoute.Api.Traffic;
+using DurianRoute.Api.Weather;
 using DurianRoute.Shared;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
@@ -80,12 +81,17 @@ builder.Services.Configure<LaneSchedulerOptions>(config.GetSection("LaneSchedule
 builder.Services.AddSingleton<LiveTrafficState>();
 builder.Services.AddSingleton<FleetState>();
 builder.Services.AddSingleton<TrafficModelService>();
+builder.Services.AddSingleton<WeatherService>();
+builder.Services.AddSingleton<RouteShapeService>();
+builder.Services.AddHttpClient("routing", c => c.DefaultRequestHeaders.UserAgent.ParseAdd("DurianRoute/1.0"));
+builder.Services.AddHttpClient("weather", c => c.DefaultRequestHeaders.UserAgent.ParseAdd("DurianRoute/1.0"));
 builder.Services.AddScoped<LaneControlService>();
 
 builder.Services.AddHostedService<TrafficSimulator>();
 builder.Services.AddHostedService<BusSimulator>();
 builder.Services.AddHostedService<ForecastWorker>();
 builder.Services.AddHostedService<LaneWorker>();
+builder.Services.AddHostedService<WeatherWorker>();
 
 var app = builder.Build();
 
@@ -98,8 +104,10 @@ using (var scope = app.Services.CreateScope())
     await SeedData.EnsureSeededAsync(db, config);
 
     app.Services.GetRequiredService<LiveTrafficState>().Initialize(await db.ChokePoints.ToListAsync());
-    app.Services.GetRequiredService<FleetState>().Initialize(
-        await db.Routes.AsNoTracking().Include(r => r.Stops).Include(r => r.Buses).AsSplitQuery().ToListAsync());
+    var routes = await db.Routes.AsNoTracking().Include(r => r.Stops).Include(r => r.Buses).AsSplitQuery().ToListAsync();
+    var shapes = app.Services.GetRequiredService<RouteShapeService>();
+    await shapes.LoadAsync(routes, CancellationToken.None);   // snap routes to real roads (cached after first run)
+    app.Services.GetRequiredService<FleetState>().Initialize(routes, shapes.Shapes);
 }
 
 // ---- HTTP pipeline ----------------------------------------------------------------------------

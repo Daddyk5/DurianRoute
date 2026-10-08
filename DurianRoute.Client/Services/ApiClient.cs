@@ -35,6 +35,12 @@ public class ApiClient(HttpClient http, SessionStore session, NavigationManager 
     public Task<List<RouteDto>> GetRoutesAsync() => GetAsync<List<RouteDto>>("api/routes");
     public Task<List<ChokePointDto>> GetChokePointsAsync() => GetAsync<List<ChokePointDto>>("api/chokepoints");
     public Task<List<ChokePointStatusDto>> GetChokePointStatusAsync() => GetAsync<List<ChokePointStatusDto>>("api/chokepoints/status");
+    public async Task<WeatherDto?> GetWeatherAsync()
+    {
+        var response = await SendAsync(new HttpRequestMessage(HttpMethod.Get, "api/weather"));
+        return response.StatusCode == HttpStatusCode.NoContent ? null : await response.Content.ReadFromJsonAsync<WeatherDto>();
+    }
+
     public Task<List<DeviationAlertDto>> GetDeviationsAsync(int take = 100) => GetAsync<List<DeviationAlertDto>>($"api/deviations?take={take}");
 
     public Task<List<ForecastDto>> GetForecastsAsync() => GetAsync<List<ForecastDto>>("api/forecasts");

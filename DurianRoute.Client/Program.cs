@@ -18,6 +18,8 @@ builder.Services.AddCascadingAuthenticationState();
 builder.Services.AddSingleton<SessionStore>();
 builder.Services.AddSingleton<AuthenticationStateProvider>(sp => sp.GetRequiredService<SessionStore>());
 builder.Services.AddSingleton<TelemetryClient>();
+builder.Services.AddSingleton<LiveStore>();
+builder.Services.AddSingleton<ThemeService>();
 
 builder.Services.AddScoped(sp =>
 {
