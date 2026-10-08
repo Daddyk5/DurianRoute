@@ -2,7 +2,7 @@
 
 **AI traffic optimization and real-time bus telemetry for Davao City.**
 
-DurianRoute is a dispatch dashboard for the City Transport and Traffic Management Office (CTTMO). It tracks public utility buses live, forecasts congestion at major choke points 24 hours ahead with ML.NET, and recommends reversible-lane and bus-priority-lane schedules that a dispatcher approves or rejects.
+DurianRoute is a dispatch dashboard for the City Transport and Traffic Management Office (CTTMO). It tracks public utility buses live, forecasts congestion at major choke points 24 hours ahead with ML.NET, and recommends reversible-lane and bus-priority-lane schedules. Dispatchers monitor the fleet and request lane changes; an admin approves or rejects every change.
 
 ![Operations dashboard](docs/screenshots/02-live-map.png)
 
@@ -57,7 +57,7 @@ A dynamic program over the hours × layouts trellis finds the cheapest sequence,
 best(k, s) = cost(k, s) + min over p [ best(k−1, p) + switchCost · [p ≠ s] ]
 ```
 
-This runs in O(hours · layouts²). A unit test checks the result against brute force over every possible plan. Hours a dispatcher has already approved are locked, and rejected options are excluded. Every 15 minutes the plan is recomputed, with the forecast corrected by live conditions.
+This runs in O(hours · layouts²). A unit test checks the result against brute force over every possible plan. Hours the admin has already approved are locked, and options the admin rejected are excluded. Dispatcher requests stay in the queue when the plan is recomputed. Every 15 minutes the plan is recomputed, with the forecast corrected by live conditions.
 
 All cost parameters are in `appsettings.json` under `LaneScheduler` and should be calibrated with CTTMO.
 

@@ -16,7 +16,7 @@ A dispatch system for the City Transport and Traffic Management Office (CTTMO) t
 
 1. **Where are the buses right now?** Live positions stream to a map every second along real Davao roads. Late, early and bunched buses are flagged automatically, and live weather shows how rain is affecting the roads.
 2. **Where will traffic jam tomorrow?** A machine-learning model forecasts congestion at each choke point 24 hours in advance.
-3. **What should we do about it?** An optimization algorithm recommends when to open a reversible lane or a bus-priority lane. A dispatcher approves or rejects each recommendation, and every change is logged.
+3. **What should we do about it?** An optimization algorithm recommends when to open a reversible lane or a bus-priority lane. An admin approves or rejects each recommendation, dispatchers can request changes for the admin to decide, and every change is logged.
 
 ## Highlights
 

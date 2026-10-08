@@ -213,7 +213,7 @@ footer { border-top: 1px solid var(--line); padding-top: 24px; display: flex; fl
         <div class="dot">4</div>
         <div class="body">
           <h3>Approve</h3>
-          <p>Dispatchers approve or reject each recommendation. Approved changes switch on automatically when their time slot starts, and every change is written to an audit log.</p>
+          <p>An admin approves or rejects each recommendation. Dispatchers can request a change with a reason, and it waits for the admin's decision. Approved changes switch on automatically when their time slot starts, and every change is written to an audit log.</p>
           <span class="tag">Blazor WebAssembly · MudBlazor · role-based access</span>
         </div>
       </div>
@@ -323,7 +323,7 @@ best(k, s) = cost(k, s)
     <div class="stack">
       <p class="eyebrow">Engineering</p>
       <h2>Built to be trusted</h2>
-      <p>The API and the real-time hub both enforce Admin and Dispatcher roles. Passwords are hashed, the login endpoint is rate-limited, database credentials stay out of source control, and every lane change is logged.</p>
+      <p>The API and the real-time hub both enforce Admin and Dispatcher roles: only the admin can approve, reject or override a lane change. Passwords are hashed, the login endpoint is rate-limited, database credentials stay out of source control, and every lane change is logged.</p>
       <p>The test suite earned its keep. It showed that the first cost model would leave a reversible lane deployed all night, because nothing in the model said staffing it costs anything. An hourly operating cost fixed that, and a test now guards it.</p>
     </div>
     <div class="stack">
